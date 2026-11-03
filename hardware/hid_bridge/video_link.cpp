@@ -3,6 +3,20 @@
 #include <esp_heap_caps.h>
 #include "ble_link.h"
 #include "src/video/gop.h"
+#include "target.h"
+
+#if IA_TARGET_ANDROID
+// Android build: the phone captures its own screen (MediaProjection), so there is no mirrored video to
+// forward. The `video` characteristic and its commands stay in the protocol (the app can probe them) and
+// answer "no video"; the stats stay zero and the ~4.5 MB GOP buffer is never allocated.
+bool video_begin() { return true; }
+void video_on_config(const uint8_t *sps_pps, size_t len) {}
+void video_on_au(const uint8_t *au, size_t len, bool idr) {}
+void video_stream(bool on) {}
+void video_snap(const String &id) { ble_reply(id + " err no video in the android build"); }
+void video_bench(const String &id, uint32_t kb) { ble_reply(id + " err no video in the android build"); }
+VideoStats video_stats() { return {0, 0, 0, 0}; }
+#else
 
 // GOP since the latest IDR; overflow drops it until the next IDR. A still screen gets an IDR only every
 // few minutes, so room for ~27 min of AUs at 5 fps (P-frames of a still screen are tiny).
@@ -200,3 +214,5 @@ VideoStats video_stats() {
   xSemaphoreGive(lock);
   return {fresh ? statKbps : 0, statIdrMs, gopBytes, fresh ? statFps : 0};
 }
+
+#endif  // !IA_TARGET_ANDROID

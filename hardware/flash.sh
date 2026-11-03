@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Build and flash the board (needs arduino-cli and the esp32 core 3.3.x).
-# Usage: hardware/flash.sh [port] [--debug] [--sta] [--build-only]
+# Usage: hardware/flash.sh [port] [--debug] [--sta] [--android] [--build-only]
 #   --debug       log commands and the AirPlay handshake on USB serial
+#   --android     Android build: absolute USB pointer, `back`, no AirPlay receiver and no hotspot
+#                 (the Android app captures the screen itself). See docs/android.md.
 #   --sta         test build: join the Wi-Fi in hid_bridge/secrets.h instead of opening a hotspot
 #   --build-only  compile only (prints flash/RAM usage)
 #   --ap-tune     A/B build: hotspot on a 20 MHz channel with 300 TU beacons (more airtime for BLE)
@@ -19,6 +21,7 @@ for a in "$@"; do
     --debug) DEFS+=" -DDEBUG_SERIAL=1" ;;
     --sta) [[ -f hid_bridge/secrets.h ]] || { echo "--sta needs hid_bridge/secrets.h (see secrets.example.h)"; exit 1; }
            DEFS+=" -DSTA_FROM_SECRETS=1" ;;
+    --android) DEFS+=" -DIA_TARGET_ANDROID=1" ;;
     --build-only) BUILD_ONLY=1 ;;
     --ap-tune) DEFS+=" -DAP_TUNE=1" ;;
     *) PORT=$a ;;

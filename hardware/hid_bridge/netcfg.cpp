@@ -1,12 +1,81 @@
 // Board settings in NVS and the Wi-Fi link, see netcfg.h.
+// The Android build (target.h) starts no radio at all: the phone captures its own screen and keeps its own
+// Wi-Fi, so only the NVS settings and the board id are needed there.
 #include "netcfg.h"
-#include <WiFi.h>
+#include "target.h"
 #include <Preferences.h>
 #include <esp_mac.h>
 #include <esp_random.h>
+#if !IA_TARGET_ANDROID
+#include <WiFi.h>
 #include <esp_netif.h>
 #include <esp_coexist.h>
 #include <esp_wifi.h>
+#endif
+
+static Preferences prefs;
+
+// ---- shared: the board id and the NVS settings (no radio) ----
+
+String board_suffix() {
+  uint8_t mac[6];
+  esp_read_mac(mac, ESP_MAC_BT);
+  char s[5];
+  snprintf(s, sizeof s, "%02X%02X", mac[4], mac[5]);
+  return s;
+}
+
+uint16_t cfg_width() { return prefs.getUShort("w", 480); }
+uint16_t cfg_height() { return prefs.getUShort("h", 1040); }
+uint8_t cfg_fps() { return prefs.getUChar("fps", 5); }
+
+void cfg_set_res(uint16_t w, uint16_t h) {
+  prefs.putUShort("w", w);
+  prefs.putUShort("h", h);
+}
+
+void cfg_set_fps(uint8_t fps) { prefs.putUChar("fps", fps); }
+
+void cfg_ed25519_seed(uint8_t seed[32]) {
+  if (prefs.getBytes("ed_seed", seed, 32) == 32) return;
+  esp_fill_random(seed, 32);
+  prefs.putBytes("ed_seed", seed, 32);
+}
+
+#if IA_TARGET_ANDROID
+
+// ---- Android build: BLE only, no Wi-Fi ----
+// `net` still answers so the app's board page works; a write is accepted and dropped.
+static String pending;
+static SemaphoreHandle_t pendingLock = xSemaphoreCreateMutex();
+
+void net_begin() { prefs.begin("agent", false); }
+
+void net_request(const String &json) {
+  xSemaphoreTake(pendingLock, portMAX_DELAY);
+  pending = json;
+  xSemaphoreGive(pendingLock);
+}
+
+void net_poll() {
+  xSemaphoreTake(pendingLock, portMAX_DELAY);
+  pending = "";
+  xSemaphoreGive(pendingLock);
+}
+
+String net_json() { return "{\"mode\":\"none\",\"ssid\":\"\",\"pass\":\"\",\"ip\":\"\"}"; }
+const char *net_mode() { return "none"; }
+String net_ip() { return ""; }
+int net_peers() { return 0; }
+bool net_up() { return false; }
+
+// The radio is BLE's alone; the preference is still accepted so the app's `coex` command keeps working.
+bool net_coex(const String &pref) { return pref == "bt" || pref == "balance" || pref == "wifi"; }
+const char *net_coex_mode() { return "bt"; }
+
+#else
+
+// ---- iPhone build: SoftAP (or station) for the AirPlay receiver ----
 
 #if STA_FROM_SECRETS
 #if __has_include("secrets.h")
@@ -17,20 +86,11 @@
 #endif
 #endif
 
-static Preferences prefs;
 static String apSsid, apPass, staSsid, staPass, mode;  // mode: "ap" | "sta"
 static String pending;
 static SemaphoreHandle_t pendingLock = xSemaphoreCreateMutex();
 // STA retries back off: a tight reconnect loop starves BLE, which shares the radio.
 static uint32_t retryAt = 0, retryGap = 5000;
-
-String board_suffix() {
-  uint8_t mac[6];
-  esp_read_mac(mac, ESP_MAC_BT);
-  char s[5];
-  snprintf(s, sizeof s, "%02X%02X", mac[4], mac[5]);
-  return s;
-}
 
 static String randomPass() {
   const char *abc = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";  // no look-alikes
@@ -207,19 +267,4 @@ String net_ip() { return mode == "sta" ? WiFi.localIP().toString() : WiFi.softAP
 int net_peers() { return mode == "sta" ? WiFi.status() == WL_CONNECTED : WiFi.softAPgetStationNum(); }
 bool net_up() { return mode == "sta" ? WiFi.status() == WL_CONNECTED : true; }
 
-uint16_t cfg_width() { return prefs.getUShort("w", 480); }
-uint16_t cfg_height() { return prefs.getUShort("h", 1040); }
-uint8_t cfg_fps() { return prefs.getUChar("fps", 5); }
-
-void cfg_set_res(uint16_t w, uint16_t h) {
-  prefs.putUShort("w", w);
-  prefs.putUShort("h", h);
-}
-
-void cfg_set_fps(uint8_t fps) { prefs.putUChar("fps", fps); }
-
-void cfg_ed25519_seed(uint8_t seed[32]) {
-  if (prefs.getBytes("ed_seed", seed, 32) == 32) return;
-  esp_fill_random(seed, 32);
-  prefs.putBytes("ed_seed", seed, 32);
-}
+#endif  // IA_TARGET_ANDROID

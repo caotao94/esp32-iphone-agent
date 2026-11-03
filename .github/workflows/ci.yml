@@ -23,6 +23,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       ios: ${{ github.event_name != 'pull_request' || steps.filter.outputs.ios == 'true' }}
+      android: ${{ github.event_name != 'pull_request' || steps.filter.outputs.android == 'true' }}
       firmware: ${{ github.event_name != 'pull_request' || steps.filter.outputs.firmware == 'true' }}
       server: ${{ github.event_name != 'pull_request' || steps.filter.outputs.server == 'true' }}
     steps:
@@ -36,6 +37,9 @@ jobs:
               - ios/**
               - prompts/**                  # bundled into the app
               - server/hidagent/agent.py    # AgentTests checks prompts are verbatim from it
+            android:
+              - .github/workflows/ci.yml
+              - android/**
             firmware:
               - .github/workflows/ci.yml
               - hardware/**
@@ -44,7 +48,7 @@ jobs:
               - server/**
       - run: |
           echo "event=${{ github.event_name }}"
-          echo "ios=${{ steps.filter.outputs.ios }} firmware=${{ steps.filter.outputs.firmware }} server=${{ steps.filter.outputs.server }}"
+          echo "ios=${{ steps.filter.outputs.ios }} android=${{ steps.filter.outputs.android }} firmware=${{ steps.filter.outputs.firmware }} server=${{ steps.filter.outputs.server }}"
 
   ios:
     needs: changes
@@ -102,8 +106,35 @@ jobs:
           arduino-cli lib install "NimBLE-Arduino@2.5.1"
       - name: Build
         run: hardware/flash.sh --build-only
+      - name: Build the Android variant (absolute pointer, no AirPlay, no hotspot)
+        run: hardware/flash.sh --android --build-only
       - name: Host tests (bplist, GOP buffer)
         run: make -C hardware/tests
+
+  android:  # the Android port (docs/android.md)
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+      - name: Unit tests (grammar, JSON, change detection, recovery)
+        run: bash ./gradlew --no-daemon :app:testDebugUnitTest
+      - name: Lint
+        run: bash ./gradlew --no-daemon :app:lintDebug
+      - name: Build
+        run: bash ./gradlew --no-daemon :app:assembleDebug
 
   server:  # legacy v0.1.0 architecture, kept working
     needs: changes

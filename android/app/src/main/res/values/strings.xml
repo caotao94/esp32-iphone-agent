@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ESP32 Agent</string>
+    <string name="notif_channel_run">Runs</string>
+    <string name="notif_channel_run_desc">What the agent is doing while it works in another app</string>
+    <string name="notif_run_title">ESP32 Agent is working</string>
+    <string name="notif_stop">Stop</string>
+</resources>

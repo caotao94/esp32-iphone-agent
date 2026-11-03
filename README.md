@@ -122,6 +122,17 @@ MCP server and an agent skill ([skills/handsy/SKILL.md](skills/handsy/SKILL.md))
 /plugin install esp32agent@handsy
 ```
 
+## Android
+
+An Android port lives in [`android/`](android/): same board, same BLE protocol, same agent. The eyes change -
+the app captures the screen itself with `MediaProjection`, so the board needs no hotspot and no AirPlay
+receiver - and the hands get easier: Android accepts an **absolute** USB pointer, so there is no AssistiveTouch,
+no drift and nothing to calibrate. Flash the board with `hardware/flash.sh --android`, build the app with
+Gradle, and read [docs/android.md](docs/android.md) for the hardware checklist, the file-by-file mapping from
+the Swift app, and what is not finished yet.
+
+For Windows tools on E: and PowerShell build commands, see [Windows development](docs/windows-development.md).
+
 ## Model and prompts
 
 - Any OpenAI-compatible vision endpoint works (vLLM, SGLang, llama.cpp, Ollama, cloud APIs). The app lists the
@@ -135,10 +146,11 @@ MCP server and an agent skill ([skills/handsy/SKILL.md](skills/handsy/SKILL.md))
 
 ```
 ios/        the app (SwiftUI): BLE link, H.264 decode, agent, setup, replay, Live Activity, widgets; tests
+android/    the Android port (Kotlin/Compose): MediaProjection for eyes, the same agent and BLE protocol
 prompts/    planner / actor prompts used by the app
 hardware/   ESP32-S3 firmware (Arduino): BLE GATT, hotspot, AirPlay receiver, USB HID; flash script,
             host tests, Mac BLE test harness (hardware/tools)
-docs/       BLE protocol, legacy version notes
+docs/       BLE protocol, the Android port, legacy version notes
 server/     legacy v0.1.0 computer-side server; not used by this version (see server/README.md)
 ```
 
@@ -148,6 +160,7 @@ Debugging without the phone app: `hardware/tools/board_test.py` plays the app ov
 ## Roadmap
 
 - [x] Drop the computer: the board mirrors and clicks, the app on the phone thinks
+- [ ] Android: run the port in `android/` on hardware and finish it ([docs/android.md](docs/android.md))
 - [ ] Landscape apps (coordinates and calibration assume portrait)
 - [ ] Non-ASCII text input (e.g. Chinese through the iOS pinyin keyboard)
 - [ ] Faster steps: several actions per model call, pointer checks only when needed

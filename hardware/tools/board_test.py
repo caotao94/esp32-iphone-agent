@@ -7,6 +7,7 @@
     uv run hardware/tools/board_test.py all          # full check (see README.md)
     uv run hardware/tools/board_test.py snap --png out/snap.png
     uv run hardware/tools/board_test.py cmd "move 100 0" click
+    uv run hardware/tools/board_test.py android    # the Android firmware checklist (docs/android.md)
 """
 import argparse
 import asyncio
@@ -172,6 +173,43 @@ async def t_hid(b: Board):
         print(f"{line:>14} -> {reply} ({ms:.0f} ms)")
 
 
+async def t_android(b: Board):
+    """The Android firmware checklist (`flash.sh --android`, docs/android.md step M0): absolute pointing,
+    the system keys, and the commands an Android build has to refuse. Watch the phone while it runs."""
+    checks = [
+        # (command line, must answer ok, what should happen on the phone)
+        ("ping", True, ""),
+        ("abs 16384 16384", True, "the pointer jumps to the middle of the screen"),
+        ("tap 16384 8192", True, "a tap in the upper middle of the screen"),
+        ("swipe 16384 24000 16384 12000 300 120", True, "a swipe up: content scrolls down, no momentum"),
+        ("press", True, ""),
+        ("abs 20000 16384", True, "the pointer moves with the button held down (a drag)"),
+        ("release", True, ""),
+        ("type hello", True, "hello appears in a focused text field"),
+        ("key enter", True, "enter is pressed"),
+        ("back", True, "the phone goes back"),
+        ("homescreen", True, "the phone goes to the home screen"),
+        ("home", True, "nothing moves: an absolute pointer does not drift"),
+        ("move 40 0", False, "refused: relative moves belong to the iPhone build"),
+        ("stream on", False, "refused: an Android build has no AirPlay receiver"),
+        ("snap", False, "refused"),
+        ("res 480 1040", False, "refused"),
+    ]
+    failed = 0
+    for line, expect_ok, watch in checks:
+        reply, ms = await b.cmd(line)
+        good = reply.startswith("ok") == expect_ok
+        failed += 0 if good else 1
+        note = f"  <- {watch}" if watch else ""
+        print(f"[{'PASS' if good else 'FAIL'}] {line:>34} -> {reply} ({ms:.0f} ms){note}")
+    st = b.status or {}
+    net, ap = st.get("net"), st.get("ap")
+    good = net == "none" and ap == "idle"
+    failed += 0 if good else 1
+    print(f"[{'PASS' if good else 'FAIL'}] status: net={net} ap={ap}  <- an Android build starts no hotspot")
+    print("\nall checks passed" if not failed else f"\n{failed} check(s) failed")
+
+
 async def t_stress(b: Board, seconds: float, load: str, kb: int, every: float):
     """Video load (`stream on`, or a synthetic `bench KB`) while ping/move goes out every `every` s;
     prints reply latency p50/p95/max and missing replies (no reply within 5 s)."""
@@ -241,7 +279,7 @@ async def t_app(b: Board, lines: list[str], seconds: float, snap_every: float, o
 
 async def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("test", choices=["all", "info", "bench", "snap", "stream", "hid", "cmd", "app", "stress"])
+    ap.add_argument("test", choices=["all", "info", "bench", "snap", "stream", "hid", "cmd", "app", "stress", "android"])
     ap.add_argument("lines", nargs="*", help="command lines for `cmd`")
     ap.add_argument("--kb", type=int, default=256)
     ap.add_argument("--seconds", type=float, default=10)
@@ -271,6 +309,8 @@ async def main():
             await t_hid(b)
         if a.test == "stress":
             await t_stress(b, a.seconds, a.load, a.kb, a.every)
+        if a.test == "android":  # the Android firmware checklist; no video, no hotspot
+            await t_android(b)
         if a.test == "app":  # drive the phone's app through the board, print its log, snap now and then
             await t_app(b, a.lines, a.seconds, a.snap_every, a.out)
         for line in a.lines if a.test == "cmd" else []:

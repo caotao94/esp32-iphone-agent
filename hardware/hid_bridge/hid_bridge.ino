@@ -6,6 +6,12 @@
 //   ping | home | move <dx> <dy> | press | release | click
 //   scroll <v> <h> | type <ascii text> | key <combo, e.g. cmd+h, enter>
 //   homescreen (the consumer-control Home key, "AC Home": iOS goes to the Home Screen, like a keyboard's home key)
+//
+// Android builds (hardware/flash.sh --android; see target.h and docs/android.md) point absolutely, which
+// Android accepts and iOS ignores, and add:
+//   back (the consumer-control Back key, "AC Back": Android goes back, like the navigation bar's back)
+//   abs X Y | tap X Y [HOLD_MS] | swipe X1 Y1 X2 Y2 [MS] [HOLD_MS], with X and Y in 0-32767 of the screen
+// Those answer "err ..." in the default (iPhone) build; `move` and `home` answer "err ..." in an Android one.
 
 #include <esp_task_wdt.h>
 #include <esp_mac.h>
@@ -17,7 +23,10 @@
 #include "ble_link.h"
 #include "netcfg.h"
 #include "video_link.h"
+#include "target.h"
+#if !IA_TARGET_ANDROID
 #include "src/airplay/airplay.h"
+#endif
 
 const int STEP = 10;      // max pointer delta per report while moving
 const int STEP_MS = 8;    // report interval; constant pace keeps iOS acceleration predictable
@@ -28,12 +37,21 @@ const int HOME_REPORTS = 50;
 
 const int WATCHDOG_MS = 8000;  // a hung loop (e.g. blocked USB) reboots the board instead of staying offline
 
+// One mouse only: USBHIDMouseBase registers its report descriptor once per sketch, so the pointing mode is a
+// build choice (target.h). Android takes the absolute pointer (no drift, no AssistiveTouch, no calibration);
+// iOS only accepts a relative one, which is why the iPhone app calibrates and re-homes it.
+#if IA_TARGET_ANDROID
+USBHIDAbsoluteMouse mouse;
+#else
 USBHIDMouse mouse;
+#endif
 USBHIDKeyboard keyboard;
 USBHIDConsumerControl consumer;
 const uint16_t AC_HOME = 0x0223;  // HID consumer page: AC Home
+const uint16_t AC_BACK = 0x0224;  // HID consumer page: AC Back (Android maps it to KEYCODE_BACK)
 static String receiverName = "ESP32 Agent";
 
+#if !IA_TARGET_ANDROID
 void movePaced(long dx, long dy) {
   while (dx || dy) {
     int sx = constrain(dx, -STEP, STEP), sy = constrain(dy, -STEP, STEP);
@@ -43,6 +61,47 @@ void movePaced(long dx, long dy) {
     delay(STEP_MS);
   }
 }
+#else
+// Absolute pointing (Android): X and Y are 0-32767 of the screen, so a gesture lands exactly where the app
+// asked. There is no pointer state to track, no drift and nothing to calibrate; the phone maps the whole
+// display onto that range. One report per step keeps Android's gesture detection happy.
+const int ABS_MAX = 32767;
+const int ABS_STEP_MS = 8;   // report interval while dragging
+const int SETTLE_MS = 8;     // let the pointer arrive before the button goes down
+static int16_t absX, absY;   // where the pointer is, so a scroll report does not also move it
+
+void absMove(long x, long y) {
+  absX = (int16_t)constrain(x, 0L, (long)ABS_MAX);
+  absY = (int16_t)constrain(y, 0L, (long)ABS_MAX);
+  mouse.move(absX, absY);
+}
+
+String absTap(long x, long y, long holdMs) {
+  absMove(x, y);
+  delay(SETTLE_MS);
+  mouse.press(MOUSE_LEFT);
+  delay(constrain(holdMs, 20L, 1000L));
+  mouse.release(MOUSE_LEFT);
+  delay(30);  // a tap is finished, not the start of a drag
+  return "ok";
+}
+
+String absSwipe(long x1, long y1, long x2, long y2, long ms, long holdMs) {
+  absMove(x1, y1);
+  delay(SETTLE_MS);
+  mouse.press(MOUSE_LEFT);
+  delay(12);
+  int steps = constrain((int)(ms / ABS_STEP_MS), 1, 400);
+  for (int i = 1; i <= steps; i++) {
+    absMove(x1 + (x2 - x1) * i / steps, y1 + (y2 - y1) * i / steps);
+    delay(ABS_STEP_MS);
+  }
+  delay(constrain(holdMs, 0L, 1000L));  // rest before lifting, so the swipe has no momentum
+  mouse.release(MOUSE_LEFT);
+  delay(30);
+  return "ok";
+}
+#endif
 
 uint8_t keyCode(const String &k) {
   if (k == "enter") return KEY_RETURN;
@@ -87,23 +146,37 @@ String run(const String &line) {
   int sp = line.indexOf(' ');
   String cmd = sp < 0 ? line : line.substring(0, sp);
   String arg = sp < 0 ? "" : line.substring(sp + 1);
-  long a = 0, b = 0;
-  sscanf(arg.c_str(), "%ld %ld", &a, &b);
+  long a = 0, b = 0, c = 0, d = 0, e = 0, f = 0;
+  sscanf(arg.c_str(), "%ld %ld %ld %ld %ld %ld", &a, &b, &c, &d, &e, &f);
 
   if (cmd == "ping") return "ok";
   if (!usbReady()) return "err phone usb asleep (unlock the phone)";
+#if IA_TARGET_ANDROID
+  if (cmd == "home") return "ok";  // an absolute pointer never drifts: nothing to re-home
+  if (cmd == "move") return "err relative move needs the iphone build; use abs X Y";
+  if (cmd == "abs") { absMove(a, b); return "ok"; }
+  if (cmd == "tap") return absTap(a, b, c ? c : 60);
+  if (cmd == "swipe") return absSwipe(a, b, c, d, e ? e : 250, f ? f : 120);
+#else
   if (cmd == "home") {  // slam the pointer into the top-left corner
     for (int i = 0; i < HOME_REPORTS; i++) { mouse.move(-127, -127); delay(2); }
     return "ok";
   }
   if (cmd == "move") { movePaced(a, b); return "ok"; }
+  if (cmd == "abs" || cmd == "tap" || cmd == "swipe") return "err needs the android build";
+#endif
   if (cmd == "press") { mouse.press(MOUSE_LEFT); return "ok"; }
   if (cmd == "release") { mouse.release(MOUSE_LEFT); return "ok"; }
   if (cmd == "click") { mouse.press(MOUSE_LEFT); delay(60); mouse.release(MOUSE_LEFT); return "ok"; }
+#if IA_TARGET_ANDROID
+  if (cmd == "scroll") { mouse.move(absX, absY, (int8_t)constrain(a, -127L, 127L), (int8_t)constrain(b, -127L, 127L)); return "ok"; }
+#else
   if (cmd == "scroll") { mouse.move(0, 0, a, b); return "ok"; }
+#endif
   if (cmd == "type") { keyboard.print(arg); return "ok"; }
   if (cmd == "key") return pressCombo(arg) ? "ok" : "err unknown key";
   if (cmd == "homescreen") { consumer.press(AC_HOME); delay(40); consumer.release(); return "ok"; }
+  if (cmd == "back") { consumer.press(AC_BACK); delay(40); consumer.release(); return "ok"; }
   return "err unknown command";
 }
 
@@ -131,6 +204,11 @@ String board(const String &line, const String &id) {
   String arg = sp < 0 ? "" : line.substring(sp + 1);
   long a = 0, b = 0;
   int n = sscanf(arg.c_str(), "%ld %ld", &a, &b);
+#if IA_TARGET_ANDROID
+  // No AirPlay receiver and no Wi-Fi in this build, so the video and radio knobs have nothing to drive.
+  if (cmd == "stream" || cmd == "snap" || cmd == "bench" || cmd == "res" || cmd == "fps" || cmd == "coex")
+    return "err unsupported in the android build";
+#endif
   if (cmd == "stream") {
     if (arg != "on" && arg != "off") return "err usage: stream on|off";
     video_stream(arg == "on");
@@ -149,13 +227,17 @@ String board(const String &line, const String &id) {
   if (cmd == "res") {
     if (n < 2 || a < 160 || b < 160 || a > 1920 || b > 2560) return "err usage: res W H";
     cfg_set_res(a, b);
+#if !IA_TARGET_ANDROID
     airplay_set_display(a, b, cfg_fps());
+#endif
     return "ok";
   }
   if (cmd == "fps") {
     if (n < 1 || a < 1 || a > 60) return "err usage: fps N (1-60)";
     cfg_set_fps(a);
+#if !IA_TARGET_ANDROID
     airplay_set_display(cfg_width(), cfg_height(), a);
+#endif
     return "ok";
   }
   if (cmd == "coex") {  // A/B knob, not stored: every boot starts at balance
@@ -170,8 +252,17 @@ String board(const String &line, const String &id) {
   return run(line);
 }
 
-String statusJson(bool full) {
+// The AirPlay receiver state; the Android build has no receiver, so mirroring is always "idle".
+const char *mirrorState() {
+#if IA_TARGET_ANDROID
+  return "idle";
+#else
   static const char *apStates[] = {"idle", "connected", "streaming"};
+  return apStates[airplay_state()];
+#endif
+}
+
+String statusJson(bool full) {
   VideoStats v = video_stats();
   char s[384];
   snprintf(s, sizeof s,
@@ -180,13 +271,13 @@ String statusJson(bool full) {
            "\"ble\":{\"mtu\":%u,\"phy\":%u,\"kbps\":%lu,\"drop\":%lu,\"rdrop\":%lu,\"n\":%d}}",
            millis(), resetReason(), (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
            (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM), usbState(), net_mode(), net_ip().c_str(), net_peers(),
-           apStates[airplay_state()], cfg_width(), cfg_height(), (unsigned long)v.kbps, v.fps, (unsigned long)v.idr_ms,
+           mirrorState(), cfg_width(), cfg_height(), (unsigned long)v.kbps, v.fps, (unsigned long)v.idr_ms,
            (unsigned long)v.gop_bytes, ble_mtu(), ble_phy(), (unsigned long)ble_kbps(), (unsigned long)ble_drops(),
            (unsigned long)ble_reply_drops(), ble_peers());
   if (full) return s;
   // MTU below ~250 (before the MTU exchange): keep only the fields the app needs to stay alive
   snprintf(s, sizeof s, "{\"up\":%lu,\"rst\":\"%s\",\"usb\":\"%s\",\"net\":\"%s\",\"ap\":\"%s\",\"ble\":{\"mtu\":%u}}",
-           millis(), resetReason(), usbState(), net_mode(), apStates[airplay_state()], ble_mtu());
+           millis(), resetReason(), usbState(), net_mode(), mirrorState(), ble_mtu());
   return s;
 }
 
@@ -206,6 +297,7 @@ void logLine(const char *msg) {
 #endif
 }
 
+#if !IA_TARGET_ANDROID
 void startAirplay() {
   static airplay_cfg cfg;
   cfg.name = receiverName.c_str();
@@ -219,6 +311,7 @@ void startAirplay() {
   cfg.log = logLine;
   if (!airplay_start(&cfg)) Serial.println("airplay: start failed");
 }
+#endif
 
 void setup() {
   Serial.begin(115200);
@@ -228,7 +321,11 @@ void setup() {
   mouse.begin();
   keyboard.begin();
   consumer.begin();
+#if IA_TARGET_ANDROID
+  USB.productName("ESP32 Agent");  // what Android shows in its USB permission dialog
+#else
   USB.productName("HID Bridge");
+#endif
   USB.begin();
   esp_task_wdt_config_t wdt = {.timeout_ms = WATCHDOG_MS, .idle_core_mask = 0, .trigger_panic = true};
   esp_task_wdt_reconfigure(&wdt);
@@ -237,7 +334,9 @@ void setup() {
   net_begin();
   if (!video_begin()) Serial.println("video: no PSRAM for the GOP buffer");
   ble_begin("ESP32 Agent " + board_suffix());
+#if !IA_TARGET_ANDROID
   startAirplay();
+#endif
   xTaskCreatePinnedToCore(statusTask, "status", 4096, NULL, 1, NULL, 1);
   Serial.printf("boot %s: free internal heap %u (largest %u), PSRAM %u, reset %s\n", receiverName.c_str(),
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),

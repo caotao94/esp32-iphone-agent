@@ -7,8 +7,10 @@ Before sending a change, run the checks for what you touched:
 ```bash
 # app (Xcode 26+)
 cd ios && xcodegen && xcodebuild test -scheme IPhoneAgent -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
-# firmware
+# firmware (add --android for the Android variant; see docs/android.md)
 hardware/flash.sh --build-only && make -C hardware/tests
+# Android app (JDK 17 and Android SDK 35)
+cd android && bash ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 # legacy server
 cd server && pip install -e ".[dev]" && ruff check . && pytest
 ```

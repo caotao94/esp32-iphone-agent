@@ -20,6 +20,8 @@ Full UUID = `6e400001-a9e8-4b1b-9c39-6d6f8a3c` + 4-hex suffix, e.g. cmd = `6e400
 `<id>` is a decimal request id chosen by the app; the reply echoes it.
 Existing HID commands, unchanged semantics from the old TCP protocol:
 `ping`, `home`, `move DX DY`, `press`, `release`, `click`, `scroll A B`, `type TEXT`, `key COMBO`.
+System keys, in every build: `homescreen` (consumer AC Home) and `back` (consumer AC Back; on Android that
+is KEYCODE_BACK, on iOS the app swipes from the screen edge instead).
 New:
 - `stream on|off` — continuously forward every access unit over `video` (default off).
 - `snap` — send SPS/PPS + every AU since the last IDR (the current GOP), then reply `ok`.
@@ -30,6 +32,24 @@ New:
 - `coex [bt|balance|wifi]` — Wi-Fi/BLE radio-share preference (A/B knob, not stored; every boot starts at
   `balance`). Replies `ok <current>`; bare `coex` just reports it.
 When the link drops, the board releases all buttons/keys (same as before).
+
+### Android builds
+
+`hardware/flash.sh --android` (`-DIA_TARGET_ANDROID=1`, see [android.md](android.md)) points **absolutely**,
+which Android accepts and iOS ignores, and has no AirPlay receiver and no hotspot: the app captures the
+screen itself and the phone keeps its own Wi-Fi.
+
+- `abs X Y` — move the pointer to X, Y in **0-32767** of the screen (the HID absolute range).
+- `tap X Y [HOLD_MS]` — move, press, hold (default 60 ms), release.
+- `swipe X1 Y1 X2 Y2 [MS] [HOLD_MS]` — drag from p1 to p2, one report every 8 ms over `MS` (default 250),
+  then rest `HOLD_MS` (default 120) before releasing, so the swipe has no momentum.
+- Drawing strokes reuse `press` / `abs` … / `release`.
+- `home` answers `ok` without moving (an absolute pointer does not drift); `move` answers `err`.
+- `stream`, `snap`, `bench`, `res`, `fps` and `coex` answer `err unsupported in the android build`.
+- `status` keeps every key: `net` is `"none"`, `ap` is `"idle"`, and the video numbers are zero.
+
+The iPhone build answers `err needs the android build` to `abs`, `tap` and `swipe`, so an app can probe
+which pointer it has: try `abs`, fall back to `home` + `move` when it errors.
 
 ## status (JSON, one notify per second, must fit one MTU; keep short keys)
 ```json
@@ -63,6 +83,8 @@ Write `{"mode":"ap"}` or `{"mode":"sta","ssid":"...","pass":"..."}` — stored i
 
 ## AirPlay
 Receiver name `ESP32 Agent`, mirroring only (no audio), H.264 only, resolution/fps from NVS.
+Not present in an Android build: there is no receiver, nothing advertises `_airplay._tcp`, and the board
+opens no hotspot.
 
 ## Deviations (firmware notes)
 - `status`: if the negotiated MTU is too small for the full JSON (MTU-3 < ~255 bytes), the notify carries a

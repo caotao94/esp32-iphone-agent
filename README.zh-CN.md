@@ -104,6 +104,14 @@ open ios/IPhoneAgent.xcodeproj                                    # 在 iPhone �
 /plugin install esp32agent@handsy
 ```
 
+## 安卓
+
+安卓移植版在 [`android/`](android/)：同一块板子、同一套蓝牙协议、同一个 Agent。变化在“眼睛”——App 用
+`MediaProjection` 自己截屏，所以板子不再需要热点和 AirPlay 接收端；“手”反而更简单：安卓接受**绝对坐标**的
+USB 指针，因此不需要 AssistiveTouch、不会漂移、也不需要校准。用 `hardware/flash.sh --android` 刷板子，用
+Gradle 构建 App；硬件验证清单、与 Swift 版的逐文件对应关系，以及尚未完成的部分，见
+[docs/android.md](docs/android.md)。
+
 ## 模型和提示词
 
 - 任何兼容 OpenAI 接口的视觉模型都能用（vLLM、SGLang、llama.cpp、Ollama、云端 API）。App 会列出接口上的模型并自动选择，也可以手动指定，规划器和执行器可以用不同模型。
@@ -114,10 +122,11 @@ open ios/IPhoneAgent.xcodeproj                                    # 在 iPhone �
 
 ```
 ios/        App（SwiftUI）：蓝牙连接、H.264 解码、Agent、引导、回放、实时活动、小组件；单元测试
+android/    安卓移植版（Kotlin/Compose）：MediaProjection 做眼睛，Agent 与蓝牙协议不变
 prompts/    App 用的规划器 / 执行器提示词
 hardware/   ESP32-S3 固件（Arduino）：蓝牙 GATT、热点、AirPlay 接收端、USB HID；刷写脚本、
             主机测试、Mac 蓝牙调试工具（hardware/tools）
-docs/       蓝牙协议、旧版说明
+docs/       蓝牙协议、安卓移植、旧版说明
 server/     旧版 v0.1.0 的电脑端服务，新版不使用（见 server/README.md）
 ```
 
@@ -126,6 +135,7 @@ server/     旧版 v0.1.0 的电脑端服务，新版不使用（见 server/READ
 ## 路线图
 
 - [x] 去掉电脑：板子负责镜像和点击，手机上的 App 负责思考
+- [ ] 安卓：把 `android/` 里的移植版在真机上跑通并补完（[docs/android.md](docs/android.md)）
 - [ ] 横屏 App（坐标和校准目前按竖屏）
 - [ ] 非 ASCII 输入（比如用 iOS 拼音键盘输入中文）
 - [ ] 更快：一次模型调用多个动作，只在需要时校正指针

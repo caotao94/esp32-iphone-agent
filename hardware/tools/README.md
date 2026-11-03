@@ -19,6 +19,19 @@ arduino-cli monitor -p /dev/cu.usbmodem* -c baudrate=115200
 Without `--sta` the board opens its own hotspot `ESP32Agent-XXXX` (password: `net` read below);
 the Mac can join that instead, but then it has no internet.
 
+## Android firmware builds
+
+A board flashed with `hardware/flash.sh --android` has no AirPlay receiver and no hotspot: the pointer is
+absolute and the Android app captures the screen itself. Check that build with
+
+```bash
+uv run hardware/tools/board_test.py android
+```
+
+which walks the checklist in [docs/android.md](../../docs/android.md) (absolute moves, taps, swipes, drags,
+`type`, `back`, `homescreen`, and the commands an Android build must refuse). `info`, `snap`, `stream` and
+`bench` do not apply to it.
+
 ## 2. BLE only (no mirroring yet)
 
 ```bash
