@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
+import android.media.projection.MediaProjectionConfig
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -113,8 +114,22 @@ class MainActivity : ComponentActivity() {
 
     private fun askForCapture() {
         val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        // Choose "Entire screen" in the dialog: a single-app capture ends as soon as the agent leaves it.
-        capture.launch(manager.createScreenCaptureIntent())
+        // Touch coordinates refer to the whole display. An app-only capture can be
+        // letterboxed and keeps showing the old app after navigation, so it cannot
+        // safely drive absolute touches. Request the display explicitly on 14+.
+        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            try {
+                DebugLog.write("Requesting full display capture with MediaProjectionConfig (SDK ${Build.VERSION.SDK_INT})")
+                manager.createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay())
+            } catch (e: Exception) {
+                DebugLog.write("MediaProjectionConfig failed: ${e.message}, falling back to legacy API")
+                manager.createScreenCaptureIntent()
+            }
+        } else {
+            DebugLog.write("Using legacy createScreenCaptureIntent (SDK ${Build.VERSION.SDK_INT})")
+            manager.createScreenCaptureIntent()
+        }
+        capture.launch(intent)
     }
 
     private fun needed(): Array<String> {

@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.lifecycle.LifecycleService
@@ -14,8 +15,11 @@ import androidx.lifecycle.lifecycleScope
 import com.example.esp32agent.android.agent.AgentLoop
 import com.example.esp32agent.android.agent.Recovery
 import com.example.esp32agent.android.agent.StepText
+import com.example.esp32agent.android.apps.InstalledApps
 import com.example.esp32agent.android.gestures.Gestures
+import com.example.esp32agent.android.screen.awaitLiveFrame
 import com.example.esp32agent.android.util.DebugLog
+import com.example.esp32agent.android.util.now
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -83,6 +87,23 @@ class AgentService : LifecycleService() {
                 endRun()
                 return@launch
             }
+            // MediaProjection delivers frames asynchronously; don't mistake startup for denied consent.
+            AgentRuntime.setDoing("waiting for the first screen frame")
+            notifyNow(AgentRuntime.doing.value)
+            DebugLog.write("capture: waiting for the first screen frame")
+            if (!g.capture.awaitLiveFrame(capturing = { g.capture.isCapturing })) {
+                failRun(g.capture.note.ifEmpty {
+                    if (g.capture.isCapturing) {
+                        "screen capture started but no image arrived within 10 seconds; unlock the phone and choose Entire screen when starting again"
+                    } else {
+                        "screen capture stopped before the first image; allow it again when starting"
+                    }
+                })
+                endRun()
+                return@launch
+            }
+            DebugLog.write("capture: first screen frame ready")
+            AgentRuntime.setDoing("starting")
             // 2. hands: the board over BLE
             if (!g.board.commands.connected) {
                 AgentRuntime.setNotice("connecting to the board...")
@@ -132,6 +153,12 @@ class AgentService : LifecycleService() {
                 prompts = g.prompts,
                 maxSteps = g.settings.maxSteps,
             )
+            // The launcher route (an app drawer, or search in the notification shade) depends on the phone's
+            // maker, and a home-screen screenshot does not show which one this is.
+            val phoneInfo = "This phone: ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE}."
+            val appHints = InstalledApps(this@AgentService).appHints(task)
+            val rules = if (appHints.isEmpty()) phoneInfo else phoneInfo + "\n" + appHints
+            agent.systemRules = { rules }
             loop = agent
             wire(agent)
             try {
@@ -181,12 +208,16 @@ class AgentService : LifecycleService() {
         // the same, and MainActivity.moveTaskToBack is what puts the target app in front again.
         agent.gate = { while (uiInFront.value) delay(200) }
         agent.link = {
+            val capture = graph?.capture
             Recovery.Link(
                 connected = graph?.board?.commands?.connected == true,
-                capturing = graph?.capture?.live == true,
-                frameAt = graph?.capture?.updated ?: 0.0,
+                capturing = capture?.isCapturing == true,
+                // Android capture is independent of BLE. A static but active
+                // projection need not publish another image when the board reconnects.
+                frameAt = if (capture?.live == true) now() else 0.0,
             )
         }
+        agent.restore = { agent.phone?.reset() }
         agent.onDoing = { doing ->
             val text = when (doing) {
                 is AgentLoop.Doing.Looking -> "looking at the screen"
@@ -212,7 +243,8 @@ class AgentService : LifecycleService() {
         }
         agent.onStep = { publish(agent) }
         agent.onFinish = { publish(agent) }
-        // A board that stops answering mid-command: drop the link so it reconnects, then retry once.
+        // A board that stops answering mid-command: drop the link so it reconnects. The command channel
+        // deliberately does not replay a timed-out HID action because the board may already have applied it.
         graph?.board?.commands?.onTimeout = { command ->
             DebugLog.write("command '$command' timed out; dropping the link to recover")
             graph?.board?.dropLink()
@@ -221,6 +253,10 @@ class AgentService : LifecycleService() {
 
     private fun publish(agent: AgentLoop) {
         AgentRuntime.publish(agent.task.value, agent.plan.value, agent.steps.value, agent.shots.value)
+        val last = agent.steps.value.lastOrNull()
+        if (!agent.running.value && last?.get("action")?.str in setOf("fail", "error")) {
+            AgentRuntime.setNotice(last?.get("reason")?.str ?: "the run stopped because it could not make progress")
+        }
     }
 
     private fun notifyNow(doing: String) {

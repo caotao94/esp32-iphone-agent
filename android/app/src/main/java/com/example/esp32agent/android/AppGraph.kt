@@ -5,6 +5,7 @@ import com.example.esp32agent.android.agent.Prompts
 import com.example.esp32agent.android.board.BoardLink
 import com.example.esp32agent.android.board.LlmError
 import com.example.esp32agent.android.gestures.AbsGestures
+import com.example.esp32agent.android.gestures.AndroidTextInput
 import com.example.esp32agent.android.gestures.Gestures
 import com.example.esp32agent.android.gestures.RelGestures
 import com.example.esp32agent.android.gestures.probeAbsolute
@@ -87,14 +88,16 @@ class AppGraph(context: Context, val scope: CoroutineScope) {
         }
         DebugLog.write("pointer: " + if (absolute) "absolute (android firmware)" else "relative (stock firmware)")
         AgentRuntime.setPointer(if (absolute) "absolute" else "relative")
-        return if (absolute) AbsGestures(board.commands) else relGestures()
+        val textInput = AndroidTextInput(appContext, board.commands)
+        return if (absolute) AbsGestures(board.commands, textInput) else relGestures(textInput)
     }
 
     /** The relative backend needs a calibration, which it keeps in the app's files. */
-    fun relGestures(): RelGestures = RelGestures(
+    fun relGestures(textInput: AndroidTextInput? = null): RelGestures = RelGestures(
         device = board.commands,
         calibrationFile = File(appContext.filesDir, "calibration.json"),
         screen = capture,
+        textInput = textInput ?: AndroidTextInput(appContext, board.commands),
     ).also { it.screenAspect = { capture.aspect } }
 
     /** Release what a run holds. The board link belongs to the process, so it is kept for the next run. */

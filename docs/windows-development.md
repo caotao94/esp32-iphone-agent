@@ -48,7 +48,7 @@ The binaries to flash are in each target's `firmware` subdirectory.
 
 Verified locally on November 4, 2026:
 
-- Android 0.1.1: 43 JVM tests pass; Lint has no errors; debug APK builds successfully.
+- Android 0.1.4: JVM tests pass; Lint has no errors; debug APK builds successfully.
 - Android firmware: 657,767 bytes of flash and 67,520 bytes of static RAM.
 - iPhone firmware: 1,455,631 bytes of flash and 94,316 bytes of static RAM.
 - Firmware host tests: pass with Zig 0.14.1 and undefined-behavior checks.
@@ -56,6 +56,33 @@ Verified locally on November 4, 2026:
 
 Hardware validation still requires an ESP32-S3 board and an Android phone. The build does not prove USB
 host power, absolute pointer behavior, MediaProjection coverage, or consumer Home/Back key behavior.
+
+## Flash the Android touchscreen firmware
+
+The new Android build identifies as `ESP32 Agent Touch` (USB revision 0x0104). Earlier Android builds
+used an absolute Mouse descriptor that can leave keyboard Home working but clicks/swipes ignored.
+The fix is in the board firmware; installing the APK alone does not update it.
+
+1. Connect the board's native USB data port to the PC. A charging-only cable or UART-only connector will
+   not provide HID input to the phone later.
+2. Open PowerShell in the repository, load the E: environment, and identify the board port:
+
+```powershell
+. E:\DevTools\esp32-agent-env.ps1
+arduino-cli --config-file E:\Arduino\arduino-cli.yaml board list
+# Replace COM7 with the board's actual port. This uploads the existing Android build.
+.\hardware\flash.ps1 -Android -Port COM7 -ConfigFile E:\Arduino\arduino-cli.yaml
+```
+
+If upload cannot enter the bootloader, hold BOOT, tap RESET, release BOOT, check the COM port again,
+then retry with that port. The script does not guess a device and can be previewed with `-WhatIf`.
+
+3. Disconnect the board from the PC and plug its native USB port into the unlocked Android phone (OTG).
+4. Install the 0.1.4 APK. In **Board > USB input diagnostics**, use **Read HID info** and **Scan Android input devices**.
+   The board should appear as `ESP32 Agent Touch` with `[touchscreen]` and X/Y `0..32767`; a normal touchscreen does not
+   display a mouse cursor. **Test Tap** sends a center tap without starting an agent run.
+5. Run a simple task in Settings. `sent` should increase; `failed` should stay zero. Counters confirm
+   USB transfer completion, so the actual tap/drag result still needs observation on the phone.
 
 ## Optional coding-agent plugin (iPhone)
 

@@ -21,6 +21,7 @@ hardware/hid_bridge/build/
 # Host test output
 hardware/tests/test
 hardware/tests/test.dSYM/
+hardware/tests/test_android_touch
 hardware/tools/out/
 
 android/.gradle/*

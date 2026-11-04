@@ -54,7 +54,7 @@ class ActionsTest {
 
     @Test
     fun rejectsBadLines() {
-        for (line in listOf("dance 1 2", "tap 1", "path 1 2 3", "swipe 1 2 3")) {
+        for (line in listOf("dance 1 2", "tap 1", "path 1 2 3", "swipe 1 2 3", "tap -1 500", "tap 1080 2400", "path 1 2 3 1001")) {
             try {
                 Actions.parseCommand(line)
                 fail("should not parse: " + line)
@@ -80,6 +80,25 @@ class ActionsTest {
         assertEquals(152L, acts[0]["x"]?.int)
         assertEquals("wait", acts[1]["action"]?.str)
         assertNull(acts[1]["thought"])
+    }
+
+    @Test
+    fun tapRetryGuardAllowsOnlyMeaningfullyDifferentCoordinates() {
+        val first = Actions.parseCommand("tap 500 500")
+        assertTrue(Actions.sameTap(first, Actions.parseCommand("tap 525 520")))
+        assertTrue(Actions.sameForRetry(first, Actions.parseCommand("tap 525 520")))
+        assertTrue(!Actions.sameTap(first, Actions.parseCommand("tap 560 500")))
+        assertTrue(!Actions.sameForRetry(first, Actions.parseCommand("swipe 500 500 500 700")))
+    }
+
+    @Test
+    fun anUncertainOutcomeAndPrecisionHintDoNotChangeTheActionIdentity() {
+        val first = Actions.parseCommand("tap 500 500")
+        val recorded = Actions.parseCommand("tap 500 500 precise")
+        recorded["outcome"] = "unknown".j()
+        recorded["reason"] = "reply was lost".j()
+        recorded["observed_after_action"] = false.j()
+        assertEquals(Actions.key(first), Actions.key(recorded))
     }
 
     @Test

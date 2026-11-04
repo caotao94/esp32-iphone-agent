@@ -179,11 +179,12 @@ async def t_android(b: Board):
     checks = [
         # (command line, must answer ok, what should happen on the phone)
         ("ping", True, ""),
-        ("abs 16384 16384", True, "the pointer jumps to the middle of the screen"),
+        ("hidinfo", True, "pointer should be touchscreen; inspect report counters"),
+        ("abs 16384 16384", True, "touch coordinates are centered; no mouse cursor is expected"),
         ("tap 16384 8192", True, "a tap in the upper middle of the screen"),
         ("swipe 16384 24000 16384 12000 300 120", True, "a swipe up: content scrolls down, no momentum"),
         ("press", True, ""),
-        ("abs 20000 16384", True, "the pointer moves with the button held down (a drag)"),
+        ("abs 20000 16384", True, "the held finger moves (a drag)"),
         ("release", True, ""),
         ("type hello", True, "hello appears in a focused text field"),
         ("key enter", True, "enter is pressed"),

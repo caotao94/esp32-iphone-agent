@@ -35,15 +35,20 @@ When the link drops, the board releases all buttons/keys (same as before).
 
 ### Android builds
 
-`hardware/flash.sh --android` (`-DIA_TARGET_ANDROID=1`, see [android.md](android.md)) points **absolutely**,
-which Android accepts and iOS ignores, and has no AirPlay receiver and no hotspot: the app captures the
-screen itself and the phone keeps its own Wi-Fi.
+`hardware/flash.sh --android` (`-DIA_TARGET_ANDROID=1`, see [android.md](android.md)) sends **single-touch
+USB digitizer reports** with a Finger contact identifier/count and absolute coordinates, and has no AirPlay receiver or hotspot. The app captures
+the screen itself and the phone keeps its own Wi-Fi. Earlier Android firmware used an absolute mouse
+descriptor, which some Android input readers do not classify as a usable pointer or touch device.
 
-- `abs X Y` — move the pointer to X, Y in **0-32767** of the screen (the HID absolute range).
+- `abs X Y` — set the touch position to X, Y in **0-32767**. It moves a held contact, but shows no cursor.
 - `tap X Y [HOLD_MS]` — move, press, hold (default 60 ms), release.
 - `swipe X1 Y1 X2 Y2 [MS] [HOLD_MS]` — drag from p1 to p2, one report every 8 ms over `MS` (default 250),
   then rest `HOLD_MS` (default 120) before releasing, so the swipe has no momentum.
 - Drawing strokes reuse `press` / `abs` … / `release`.
+- `scroll` is unsupported on the touchscreen; use `swipe`.
+- `hidinfo` returns the target, input descriptor (`touchscreen`), USB state, report counters and build time.
+- USB report transmission failures return `err` instead of unconditional `ok`; `ok` still does not prove
+  that a particular app reacted to the input.
 - `home` answers `ok` without moving (an absolute pointer does not drift); `move` answers `err`.
 - `stream`, `snap`, `bench`, `res`, `fps` and `coex` answer `err unsupported in the android build`.
 - `status` keeps every key: `net` is `"none"`, `ap` is `"idle"`, and the video numbers are zero.

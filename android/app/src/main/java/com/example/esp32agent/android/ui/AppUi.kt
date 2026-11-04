@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.sp
 import com.example.esp32agent.android.AgentRuntime
 import com.example.esp32agent.android.AppGraph
 import com.example.esp32agent.android.agent.StepText
+import com.example.esp32agent.android.agent.JsonParse
 import com.example.esp32agent.android.util.DebugLog
 import com.example.esp32agent.android.util.normalizeApiKey
 import kotlinx.coroutines.delay
@@ -92,6 +93,11 @@ private fun Line(label: String, value: String) {
     }
 }
 
+private fun formatRange(axis: AndroidInputAxisRange): String {
+    fun number(value: Float): String = if (value % 1f == 0f) value.toInt().toString() else "%.2f".format(value)
+    return "${number(axis.min)}..${number(axis.max)}"
+}
+
 // MARK: - Run
 
 @Composable
@@ -103,7 +109,7 @@ private fun RunTab(graph: AppGraph, onStart: (String) -> Unit, onStop: () -> Uni
     val steps by AgentRuntime.steps.collectAsState()
     val pointer by AgentRuntime.pointer.collectAsState()
     val board by graph.board.ui.collectAsState()
-    var input by remember { mutableStateOf("") }
+    var input by rememberSaveable { mutableStateOf("") }
     val settings = remember { graph.settings }
 
     Column(
@@ -189,10 +195,12 @@ private fun Checklist(board: Boolean, capture: Boolean, model: Boolean, pointer:
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("ℹ️", modifier = Modifier.padding(end = 6.dp))
+            Text("⚠️", modifier = Modifier.padding(end = 6.dp))
             Text(
-                if (capture) "the capture is running" else "starting asks to share the entire screen",
+                if (capture) "screen capture active (full screen)" else "When prompted, MUST select 'Share entire screen' (not single app)",
                 fontSize = 13.sp,
+                fontWeight = if (capture) null else androidx.compose.ui.text.font.FontWeight.Bold,
+                color = if (capture) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
             )
         }
     }
@@ -203,7 +211,11 @@ private fun Checklist(board: Boolean, capture: Boolean, model: Boolean, pointer:
 @Composable
 private fun BoardTab(graph: AppGraph, onCalibrate: () -> Unit, onScan: () -> Unit) {
     val ui by graph.board.ui.collectAsState()
+    val running by AgentRuntime.running.collectAsState()
     var mode by remember { mutableStateOf(graph.settings.pointerMode) }
+    var hidMessage by remember { mutableStateOf("") }
+    var hidBusy by remember { mutableStateOf(false) }
+    var androidInputs by remember { mutableStateOf<List<AndroidInputDeviceInfo>?>(null) }
     val scope = rememberCoroutineScope()
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp)) {
@@ -230,6 +242,100 @@ private fun BoardTab(graph: AppGraph, onCalibrate: () -> Unit, onScan: () -> Uni
             }
         }
 
+        Section("USB input diagnostics") {
+            Text("Bluetooth ready and USB ok do not confirm that Android accepted a touch. Read both the firmware declaration and the Android input device here.",
+                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = {
+                    hidBusy = true
+                    scope.launch {
+                        hidMessage = runCatching {
+                            val raw = graph.board.commands.send("hidinfo")
+                            val info = JsonParse.parseObject(raw)
+                            if (info == null) raw else {
+                                "Input: ${info["pointer"]?.str ?: "unknown"}; USB: ${info["usb"]?.str ?: "unknown"}\n" +
+                                    "Reports sent: ${info["sent"]?.int ?: 0}; failed: ${info["failed"]?.int ?: 0}\n" +
+                                    "Build: ${info["build"]?.str ?: "unknown"}"
+                            }
+                        }.getOrElse {
+                            if (it.message?.contains("unknown command") == true) {
+                                "Older firmware: install the Android touchscreen firmware to enable HID diagnostics."
+                            } else it.message ?: "HID diagnostics failed"
+                        }
+                        hidBusy = false
+                    }
+                }, enabled = ui.connected && !running && !hidBusy) { Text("Read HID info") }
+                OutlinedButton(onClick = {
+                    hidBusy = true
+                    scope.launch {
+                        hidMessage = runCatching {
+                            graph.board.commands.send("homescreen")
+                            "Home report sent. If the phone stayed here, check the USB data connection."
+                        }.getOrElse { it.message ?: "Home test failed" }
+                        hidBusy = false
+                    }
+                }, enabled = ui.connected && !running && !hidBusy) { Text("Test Home") }
+                OutlinedButton(onClick = {
+                    hidBusy = true
+                    scope.launch {
+                        hidMessage = runCatching {
+                            graph.board.commands.send("tap 16384 8192 100")
+                            "Center tap sent. If nothing opened or focused, Android did not deliver the touch."
+                        }.getOrElse { it.message ?: "Tap test failed" }
+                        hidBusy = false
+                    }
+                }, enabled = ui.connected && !running && !hidBusy) { Text("Test Tap") }
+            }
+            if (hidMessage.isNotEmpty()) Text(hidMessage, fontSize = 12.sp)
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = {
+                androidInputs = AndroidInputDiagnostics.snapshot()
+            }) { Text("Scan Android input devices") }
+            when (val devices = androidInputs) {
+                null -> Text("No Android scan yet.", fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                emptyList<AndroidInputDeviceInfo>() -> Text(
+                    "Android currently reports no input devices.", fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                else -> devices.forEach { device ->
+                    val axes = listOfNotNull(
+                        device.x?.let { "X ${formatRange(it)}" },
+                        device.y?.let { "Y ${formatRange(it)}" },
+                    ).joinToString("; ")
+                    val kind = when {
+                        device.isTouchscreen -> "touchscreen"
+                        device.isMouse -> "mouse"
+                        else -> "other"
+                    }
+                    Text(
+                        "#${device.id} ${device.name} [$kind]\n" +
+                            "source: ${device.sourceSummary()} | VID ${device.vendorId} PID ${device.productId}\n" +
+                        "${if (device.virtual) "virtual" else "physical"}" +
+                            if (axes.isNotEmpty()) " | $axes" else "",
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(vertical = 3.dp),
+                    )
+                }
+            }
+            androidInputs?.let { devices ->
+                if (devices.isNotEmpty()) {
+                    val boards = devices.count { it.isLikelyBoard }
+                    Text(
+                        if (boards == 0) {
+                            "No ESP32 Agent input device is visible; the entries above are other Android devices."
+                        } else {
+                            "$boards possible ESP32 Agent input device(s) visible to Android."
+                        },
+                        fontSize = 12.sp,
+                        color = if (boards == 0) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
         if (ui.scanning || ui.found.isNotEmpty()) {
             Section("Found") {
                 if (ui.found.isEmpty()) Text("looking for a board named “ESP32 Agent XXXX”...", fontSize = 13.sp)
@@ -243,7 +349,7 @@ private fun BoardTab(graph: AppGraph, onCalibrate: () -> Unit, onScan: () -> Uni
 
         Section("Pointer") {
             Text(
-                "An Android firmware build (hardware/flash.sh --android) points absolutely: no calibration, " +
+                "The Android touchscreen firmware (hardware/flash.sh --android) uses absolute touch coordinates: no calibration, " +
                     "no drift. The stock build needs the relative pointer calibrated from the screen.",
                 fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

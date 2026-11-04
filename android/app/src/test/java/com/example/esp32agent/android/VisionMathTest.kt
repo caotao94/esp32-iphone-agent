@@ -30,6 +30,24 @@ class VisionMathTest {
     }
 
     @Test
+    fun aWhiteToBlackScreenIsStillAChange() {
+        // Grayscale pixels are stored in a ByteArray. Values above 127 must be
+        // compared as unsigned bytes: 255.toByte() is -1 in Kotlin, and a
+        // signed subtraction would otherwise make this full-screen change
+        // look like a one-level change.
+        val a = scales(gray(32, 64, 255), gray(100, 200, 255))
+        val b = scales(gray(32, 64, 0), gray(100, 200, 0))
+        assertTrue(VisionMath.changed(a, b))
+    }
+
+    @Test
+    fun blackToWhitePixelsAreAChange() {
+        val before = scales(gray(32, 64, 0), gray(100, 200, 0))
+        val after = scales(gray(32, 64, 255), gray(100, 200, 255))
+        assertTrue(VisionMath.changed(before, after))
+    }
+
+    @Test
     fun aSmallChangeIsStillAChange() {
         val fineA = gray(100, 200)
         val fineB = gray(100, 200)
@@ -61,6 +79,36 @@ class VisionMathTest {
         val fineB = gray(100, 200)
         for (i in 0 until 300) fineB.px[i] = 10  // the very top rows: the clock
         assertFalse(VisionMath.changed(scales(gray(32, 64), fineA), scales(gray(32, 64), fineB)))
+    }
+
+    @Test
+    fun coarsePointerMaskIsHonored() {
+        val coarseA = gray(32, 64)
+        val coarseB = gray(32, 64)
+        coarseB.px[38 * 32 + 6] = 0
+        val fine = gray(100, 200)
+        val before = scales(coarseA, fine)
+        val after = scales(coarseB, fine)
+        assertTrue(VisionMath.changed(before, after, threshold = 0.0))
+        assertFalse(VisionMath.changed(before, after, listOf(Pt(0.2, 0.6)), threshold = 0.0))
+    }
+
+    @Test
+    fun sceneChangeNeedsBroadContentDifference() {
+        val before = gray(32, 64, 200)
+        val after = gray(32, 64, 200)
+        for (y in 5 until 62) for (x in 0 until 32) after.px[y * 32 + x] = 20
+        assertTrue(VisionMath.sceneChanged(before, after))
+    }
+
+    @Test
+    fun sceneChangeIgnoresBarsAndPointer() {
+        val before = gray(32, 64, 200)
+        val after = gray(32, 64, 200)
+        for (y in 0 until 4) for (x in 0 until 32) after.px[y * 32 + x] = 20
+        for (y in 62 until 64) for (x in 0 until 32) after.px[y * 32 + x] = 20
+        for (y in 38 until 43) for (x in 5 until 10) after.px[y * 32 + x] = 20
+        assertFalse(VisionMath.sceneChanged(before, after, listOf(Pt(0.2, 0.6))))
     }
 
     @Test

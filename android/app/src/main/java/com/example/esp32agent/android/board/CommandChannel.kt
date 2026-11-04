@@ -65,7 +65,7 @@ class CommandChannel(var transport: BoardTransport? = null) : HidDevice {
     /** Command name and how long the board took, in ms. */
     var onTiming: ((String, Double) -> Unit)? = null
 
-    /** Called once when a command times out; the caller can free the link (turn a stream off) and retry. */
+    /** Called once when a command times out; the caller can free the link and reconnect. */
     var onTimeout: (suspend (String) -> Unit)? = null
 
     var log: (String) -> Unit = { DebugLog.write(it) }
@@ -107,11 +107,11 @@ class CommandChannel(var transport: BoardTransport? = null) : HidDevice {
     override suspend fun send(command: String): String = try {
         sendOnce(command, null)
     } catch (e: BoardTimeout) {
-        val handler = onTimeout
-        if (command == "ping" || command.startsWith("stream") || handler == null) throw e
-        handler(command)
-        DebugLog.write("cmd retry after timeout: " + command.take(40))
-        sendOnce(command, null)
+        // A HID command may have reached the board even when its reply was lost. Retrying tap, swipe,
+        // click, type, key, Home or Back would perform the action twice. Let the caller observe the
+        // current screen and decide what to do after the link recovers.
+        onTimeout?.invoke(command)
+        throw e
     }
 
     /**

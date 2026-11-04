@@ -10,8 +10,11 @@ import kotlin.math.pow
  * Port of Agent/Vision.swift (which ports the legacy server's vision.py).
  */
 object VisionMath {
+    private fun gray(value: Byte): Int = value.toInt() and 0xff
     /** Top share of the frame never compared: the status bar, where the clock and our own notification live. */
     const val topMask = 0.06
+    /** Navigation indicators do not invalidate coordinates in the content area. */
+    const val bottomMask = 0.04
 
     /** A grayscale bitmap (the "L" weights PIL uses), row-major. */
     class Gray(val w: Int, val h: Int, val px: ByteArray) {
@@ -34,23 +37,55 @@ object VisionMath {
         if (a.fine.w != b.fine.w || a.fine.h != b.fine.h) return true
 
         var total = 0
-        for (i in a.coarse.px.indices) total += abs(a.coarse.px[i].toInt() - b.coarse.px[i].toInt())
-        if (total.toDouble() / a.coarse.px.size > threshold) return true  // a big change: new screen, scrolled list
+        var compared = 0
+        for (i in a.coarse.px.indices) {
+            if (excluded(i % a.coarse.w, i / a.coarse.w, a.coarse, ignore)) continue
+            total += abs(gray(a.coarse.px[i]) - gray(b.coarse.px[i]))
+            compared++
+        }
+        if (compared > 0 && total.toDouble() / compared > threshold) return true  // a big change: new screen, scrolled list
 
         val w = a.fine.w
         val h = a.fine.h
-        val masks = ignore.map { Pt(it.x * w, it.y * h) }
-        val r2 = (0.05 * w).pow(2)
         var hits = 0
         for (i in 0 until w * h) {
-            if (abs(a.fine.px[i].toInt() - b.fine.px[i].toInt()) <= 25) continue
-            val x = (i % w).toDouble()
-            val y = (i / w).toDouble()
-            if (y <= topMask * h) continue
-            if (masks.any { (x - it.x).pow(2) + (y - it.y).pow(2) <= r2 }) continue
+            if (abs(gray(a.fine.px[i]) - gray(b.fine.px[i])) <= 25) continue
+            if (excluded(i % w, i / w, a.fine, ignore)) continue
             hits++
         }
         return hits >= 6
+    }
+
+    /**
+     * A substantial content change can invalidate coordinates chosen on an earlier image. Small
+     * updates (cursor blink, spinner, button ripple) do not; clock and navigation pixels are excluded.
+     * Both a material average difference and a broad changed area are required.
+     */
+    fun sceneChanged(before: Gray?, after: Gray?, ignore: List<Pt> = emptyList()): Boolean {
+        val a = before ?: return true
+        val b = after ?: return true
+        if (a.w != b.w || a.h != b.h) return true
+        var total = 0
+        var hits = 0
+        var compared = 0
+        for (i in a.px.indices) {
+            if (excluded(i % a.w, i / a.w, a, ignore, navigation = true)) continue
+            val difference = abs(gray(a.px[i]) - gray(b.px[i]))
+            total += difference
+            if (difference > 25) hits++
+            compared++
+        }
+        return compared > 0 && total.toDouble() / compared > 8.0 && hits.toDouble() / compared >= 0.12
+    }
+
+    private fun excluded(x: Int, y: Int, frame: Gray, ignore: List<Pt>, navigation: Boolean = false): Boolean {
+        if (y <= topMask * frame.h || (navigation && y >= (1.0 - bottomMask) * frame.h)) return true
+        val radius = 0.05 * frame.w
+        return ignore.any {
+            val dx = x - it.x * frame.w
+            val dy = y - it.y * frame.h
+            dx * dx + dy * dy <= radius * radius
+        }
     }
 
     /**
@@ -74,7 +109,7 @@ object VisionMath {
         val ys = ArrayList<Int>()
         for (y in top until bottom) {
             for (x in left until right) {
-                if (abs(a.px[y * w + x].toInt() - b.px[y * w + x].toInt()) > 30) {
+                if (abs(gray(a.px[y * w + x]) - gray(b.px[y * w + x])) > 30) {
                     xs.add(x - left)
                     ys.add(y - top)
                 }

@@ -2,8 +2,8 @@
 // adds -DIA_TARGET_ANDROID=1). The default (0) is the iPhone build this project shipped with.
 //
 // Android build (-DIA_TARGET_ANDROID=1):
-//   - the USB pointer is absolute (0-32767 of the screen), which Android accepts and iOS ignores, so the
-//     app needs no AssistiveTouch, no pointer calibration and no drift correction;
+//   - a single-touch USB digitizer uses absolute coordinates (0-32767), with Tip Switch for down/up;
+//     no AssistiveTouch, visible mouse pointer, pointer calibration or drift correction;
 //   - `back` (consumer AC Back -> KEYCODE_BACK) joins `homescreen` (AC Home -> KEYCODE_HOME);
 //   - no AirPlay receiver and no hotspot: the Android app captures the screen itself (MediaProjection)
 //     and the phone keeps its own Wi-Fi for the model. The board never starts a radio network, which

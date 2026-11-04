@@ -32,6 +32,7 @@ class RelGestures(
     override val device: HidDevice,
     private val calibrationFile: File,
     private val screen: ScreenSource?,
+    private val textInput: AndroidTextInput? = null,
 ) : Gestures {
 
     companion object {
@@ -346,9 +347,8 @@ class RelGestures(
         device.send("scroll $lines 0")
     }
 
-    override suspend fun type(text: String) {
-        device.send("type $text")
-    }
+    /** Pasted, so a Chinese keyboard cannot turn the letters into pinyin (see [AndroidTextInput]). */
+    override suspend fun type(text: String) = enterText(device, textInput, text, log)
 
     override suspend fun key(combo: String) {
         device.send("key $combo")
@@ -356,9 +356,14 @@ class RelGestures(
 
     /** The board's consumer-control Home key, which Android maps to KEYCODE_HOME. */
     override suspend fun goHome() {
-        if (runCatching { device.send("homescreen") }.isSuccess) {
+        try {
+            device.send("homescreen")
             delay(350)
             return
+        } catch (e: DeviceError) {
+            // Fall back only when the board explicitly lacks the command. A timeout means Home may
+            // already have been delivered, so a second gesture would be unsafe.
+            if (e.message?.contains("unknown command", ignoreCase = true) != true) throw e
         }
         // Older firmware without the consumer key: flick up from the bottom edge (gesture navigation).
         swipe(0.5, 0.95, 0.5, 0.45, hold = false)
@@ -367,9 +372,13 @@ class RelGestures(
 
     /** AC Back on any current firmware; a swipe in from the left edge otherwise (gesture navigation). */
     override suspend fun goBack() {
-        if (runCatching { device.send("back") }.isSuccess) {
+        try {
+            device.send("back")
             delay(250)
             return
+        } catch (e: DeviceError) {
+            // As above, an unknown command is the only safe fallback case.
+            if (e.message?.contains("unknown command", ignoreCase = true) != true) throw e
         }
         swipe(0.005, 0.45, 0.6, 0.45, hold = false)
         pos = null

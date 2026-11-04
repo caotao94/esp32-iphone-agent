@@ -31,6 +31,19 @@ object Vision {
     fun changed(before: ByteArray?, after: ByteArray?, ignore: List<Pt> = emptyList(), threshold: Double = 1.0): Boolean =
         VisionMath.changed(scales(before), scales(after), ignore, threshold)
 
+    /** Whether a newer image has a substantially different layout from the model's image. */
+    fun sceneChanged(before: ByteArray?, after: ByteArray?, ignore: List<Pt> = emptyList()): Boolean =
+        VisionMath.sceneChanged(coarse(before), coarse(after), ignore)
+
+    private fun coarse(jpeg: ByteArray?): VisionMath.Gray? {
+        val img = image(jpeg) ?: return null
+        return try {
+            gray(img, COARSE_W, COARSE_H)
+        } finally {
+            img.recycle()
+        }
+    }
+
     /** The pointer's position, from two frames that differ only by the pointer having moved `shift` right. */
     fun pointer(before: ByteArray?, after: ByteArray?, near: Pt, shift: Double, reach: Pt = Pt(0.12, 0.08)): Pt? {
         val a = image(before) ?: return null

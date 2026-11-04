@@ -9,10 +9,8 @@ import android.content.Context
  *
  * The action list in actor.md and the grammar in Actions.kt must stay in sync, as prompts/README.md asks.
  */
-class Prompts(context: Context) {
-    val planner: String = load(context, "planner")
-    val actorServer: String = load(context, "actor")
-    val appRules: String = load(context, "app-rules")
+class Prompts(val planner: String, val actorServer: String, val appRules: String) {
+    constructor(context: Context) : this(load(context, "planner"), load(context, "actor"), load(context, "app-rules"))
 
     val actor: String get() = actorServer + "\n" + appRules
     val plannerApp: String get() = planner + "\n" + appRules

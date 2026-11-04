@@ -7,8 +7,8 @@
 //   scroll <v> <h> | type <ascii text> | key <combo, e.g. cmd+h, enter>
 //   homescreen (the consumer-control Home key, "AC Home": iOS goes to the Home Screen, like a keyboard's home key)
 //
-// Android builds (hardware/flash.sh --android; see target.h and docs/android.md) point absolutely, which
-// Android accepts and iOS ignores, and add:
+// Android builds (hardware/flash.sh --android; see target.h and docs/android.md) send single-touch
+// digitizer reports rather than absolute mouse reports, and add:
 //   back (the consumer-control Back key, "AC Back": Android goes back, like the navigation bar's back)
 //   abs X Y | tap X Y [HOLD_MS] | swipe X1 Y1 X2 Y2 [MS] [HOLD_MS], with X and Y in 0-32767 of the screen
 // Those answer "err ..." in the default (iPhone) build; `move` and `home` answer "err ..." in an Android one.
@@ -24,6 +24,9 @@
 #include "netcfg.h"
 #include "video_link.h"
 #include "target.h"
+#if IA_TARGET_ANDROID
+#include "android_touch.h"
+#endif
 #if !IA_TARGET_ANDROID
 #include "src/airplay/airplay.h"
 #endif
@@ -37,11 +40,10 @@ const int HOME_REPORTS = 50;
 
 const int WATCHDOG_MS = 8000;  // a hung loop (e.g. blocked USB) reboots the board instead of staying offline
 
-// One mouse only: USBHIDMouseBase registers its report descriptor once per sketch, so the pointing mode is a
-// build choice (target.h). Android takes the absolute pointer (no drift, no AssistiveTouch, no calibration);
-// iOS only accepts a relative one, which is why the iPhone app calibrates and re-homes it.
+// Android uses a single-touch USB digitizer; iPhone uses a relative USB mouse. The BLE coordinates
+// remain absolute in the Android build, so existing apps can use the updated firmware unchanged.
 #if IA_TARGET_ANDROID
-USBHIDAbsoluteMouse mouse;
+AndroidTouch mouse;
 #else
 USBHIDMouse mouse;
 #endif
@@ -62,9 +64,8 @@ void movePaced(long dx, long dy) {
   }
 }
 #else
-// Absolute pointing (Android): X and Y are 0-32767 of the screen, so a gesture lands exactly where the app
-// asked. There is no pointer state to track, no drift and nothing to calibrate; the phone maps the whole
-// display onto that range. One report per step keeps Android's gesture detection happy.
+// Absolute touch (Android): X and Y are 0-32767 of the screen. A tap sends tip down/up, and a swipe
+// holds tip down while changing X/Y. Updating X/Y without tip down does not show a mouse cursor.
 const int ABS_MAX = 32767;
 const int ABS_STEP_MS = 8;   // report interval while dragging
 const int SETTLE_MS = 8;     // let the pointer arrive before the button goes down
@@ -142,7 +143,7 @@ bool usbReady() {
   return tud_mounted() && !tud_suspended();
 }
 
-String run(const String &line) {
+String runHid(const String &line) {
   int sp = line.indexOf(' ');
   String cmd = sp < 0 ? line : line.substring(0, sp);
   String arg = sp < 0 ? "" : line.substring(sp + 1);
@@ -156,7 +157,10 @@ String run(const String &line) {
   if (cmd == "move") return "err relative move needs the iphone build; use abs X Y";
   if (cmd == "abs") { absMove(a, b); return "ok"; }
   if (cmd == "tap") return absTap(a, b, c ? c : 60);
-  if (cmd == "swipe") return absSwipe(a, b, c, d, e ? e : 250, f ? f : 120);
+  if (cmd == "swipe") {
+    int fields = sscanf(arg.c_str(), "%ld %ld %ld %ld %ld %ld", &a, &b, &c, &d, &e, &f);
+    return absSwipe(a, b, c, d, fields >= 5 ? e : 250, fields >= 6 ? f : 120);
+  }
 #else
   if (cmd == "home") {  // slam the pointer into the top-left corner
     for (int i = 0; i < HOME_REPORTS; i++) { mouse.move(-127, -127); delay(2); }
@@ -169,15 +173,32 @@ String run(const String &line) {
   if (cmd == "release") { mouse.release(MOUSE_LEFT); return "ok"; }
   if (cmd == "click") { mouse.press(MOUSE_LEFT); delay(60); mouse.release(MOUSE_LEFT); return "ok"; }
 #if IA_TARGET_ANDROID
-  if (cmd == "scroll") { mouse.move(absX, absY, (int8_t)constrain(a, -127L, 127L), (int8_t)constrain(b, -127L, 127L)); return "ok"; }
+  if (cmd == "scroll") return "err touchscreen has no wheel; use swipe X1 Y1 X2 Y2";
 #else
   if (cmd == "scroll") { mouse.move(0, 0, a, b); return "ok"; }
 #endif
   if (cmd == "type") { keyboard.print(arg); return "ok"; }
   if (cmd == "key") return pressCombo(arg) ? "ok" : "err unknown key";
-  if (cmd == "homescreen") { consumer.press(AC_HOME); delay(40); consumer.release(); return "ok"; }
-  if (cmd == "back") { consumer.press(AC_BACK); delay(40); consumer.release(); return "ok"; }
+  if (cmd == "homescreen" || cmd == "back") {
+    bool pressed = consumer.press(cmd == "homescreen" ? AC_HOME : AC_BACK) != 0;
+    delay(40);
+    bool released = consumer.release() != 0;
+    return pressed && released ? "ok" : "err USB consumer report failed (check phone USB data connection)";
+  }
   return "err unknown command";
+}
+
+String run(const String &line) {
+#if IA_TARGET_ANDROID
+  mouse.startCommand();
+#endif
+  String result = runHid(line);
+#if IA_TARGET_ANDROID
+  if (result.startsWith("ok") && !mouse.commandOk()) {
+    return "err USB touch report failed (check phone USB data connection)";
+  }
+#endif
+  return result;
 }
 
 const char *resetReason() {
@@ -204,6 +225,20 @@ String board(const String &line, const String &id) {
   String arg = sp < 0 ? "" : line.substring(sp + 1);
   long a = 0, b = 0;
   int n = sscanf(arg.c_str(), "%ld %ld", &a, &b);
+  if (cmd == "hidinfo") {
+    char info[256];
+#if IA_TARGET_ANDROID
+    snprintf(info, sizeof info,
+             "ok {\"target\":\"android\",\"pointer\":\"touchscreen\",\"usb\":\"%s\",\"ready\":%s,\"sent\":%lu,\"failed\":%lu,\"build\":\"%s %s\"}",
+             usbState(), tud_hid_n_ready(0) ? "true" : "false",
+             (unsigned long)mouse.sent(), (unsigned long)mouse.failed(), __DATE__, __TIME__);
+#else
+    snprintf(info, sizeof info,
+             "ok {\"target\":\"iphone\",\"pointer\":\"relative-mouse\",\"usb\":\"%s\",\"ready\":%s,\"build\":\"%s %s\"}",
+             usbState(), tud_hid_n_ready(0) ? "true" : "false", __DATE__, __TIME__);
+#endif
+    return info;
+  }
 #if IA_TARGET_ANDROID
   // No AirPlay receiver and no Wi-Fi in this build, so the video and radio knobs have nothing to drive.
   if (cmd == "stream" || cmd == "snap" || cmd == "bench" || cmd == "res" || cmd == "fps" || cmd == "coex")
@@ -322,7 +357,8 @@ void setup() {
   keyboard.begin();
   consumer.begin();
 #if IA_TARGET_ANDROID
-  USB.productName("ESP32 Agent");  // what Android shows in its USB permission dialog
+  USB.productName("ESP32 Agent Touch");
+  USB.firmwareVersion(0x0104);  // new device revision for the contact-ID touchscreen descriptor
 #else
   USB.productName("HID Bridge");
 #endif

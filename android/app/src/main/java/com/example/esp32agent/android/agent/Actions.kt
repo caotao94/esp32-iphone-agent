@@ -2,6 +2,7 @@ package com.example.esp32agent.android.agent
 
 import com.example.esp32agent.android.util.Pt
 import com.example.esp32agent.android.util.circlePoints
+import kotlin.math.abs
 
 /**
  * Parsing of the model's replies: one DO line at a time, then a whole THINK / DO... reply, then a plan.
@@ -51,6 +52,7 @@ object Actions {
             return jObj("action" to name.j(), first to text.j())
         }
         val numbers = NUMBER.findAll(rest).map { it.value.toDouble().toLong() }.toList()
+        if (numbers.any { it !in 0L..1000L }) throw ParseError("$name coordinates must be within the screenshot's 0-1000 range")
         if (keys == listOf("points")) {
             if (numbers.size < 4 || numbers.size % 2 != 0) {
                 throw ParseError("path needs 2+ x y pairs: " + rest)
@@ -84,7 +86,29 @@ object Actions {
     }
 
     /** The action itself, without thoughts, timings and other bookkeeping. */
-    fun key(step: JObject): JObject = step.without(meta)
+    fun key(step: JObject): JObject {
+        val name = step["action"]?.str ?: return step.without(meta)
+        val parameters = actions[name] ?: return step.without(meta)
+        return JObject(listOf("action" to name.j()) + parameters.mapNotNull { p -> step[p]?.let { p to it } })
+    }
+
+    /**
+     * Whether two tap proposals target the same visible control closely enough
+     * that retrying them would just click it twice. Models often move a point by
+     * a few pixels between replies, so exact JSON equality is too weak here.
+     */
+    fun sameTap(a: JObject, b: JObject, tolerance: Long = 30L): Boolean {
+        if (a["action"]?.str != "tap" || b["action"]?.str != "tap") return false
+        val ax = a["x"]?.double ?: return false
+        val ay = a["y"]?.double ?: return false
+        val bx = b["x"]?.double ?: return false
+        val by = b["y"]?.double ?: return false
+        return abs(ax - bx) <= tolerance && abs(ay - by) <= tolerance
+    }
+
+    /** Same action for the retry guard; taps use a small coordinate tolerance. */
+    fun sameForRetry(a: JObject, b: JObject): Boolean =
+        if (sameTap(a, b)) true else key(a) == key(b)
 
     private fun group(re: Regex, text: String): String? = re.find(text)?.groupValues?.get(1)
 }

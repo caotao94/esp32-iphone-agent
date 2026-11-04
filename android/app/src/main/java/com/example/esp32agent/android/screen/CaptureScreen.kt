@@ -1,5 +1,6 @@
 package com.example.esp32agent.android.screen
 
+import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -13,11 +14,13 @@ import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.PowerManager
 import android.util.DisplayMetrics
 import android.view.WindowManager
 import com.example.esp32agent.android.util.DebugLog
 import com.example.esp32agent.android.util.now
 import java.io.ByteArrayOutputStream
+import kotlin.math.abs
 
 /**
  * The eyes: a MediaProjection capture of the phone's own screen, as downscaled JPEG frames.
@@ -43,23 +46,46 @@ class CaptureScreen(private val context: Context) : ScreenSource {
     private var display: VirtualDisplay? = null
     private var reader: ImageReader? = null
     private var thread: HandlerThread? = null
+    private val frameLock = Any()
+    private val power = context.getSystemService(PowerManager::class.java)
+    private val keyguard = context.getSystemService(KeyguardManager::class.java)
+
+    // Image.timestamp uses CLOCK_MONOTONIC (the same clock as System.nanoTime()),
+    // while the rest of the agent uses wall-clock seconds. Keep an offset so a
+    // frame captured before an action cannot look new merely because its callback
+    // was delivered after that action.
+    private val wallAtMonotonicStart = now() - System.nanoTime() / 1_000_000_000.0
 
     @Volatile private var current: ByteArray? = null
     @Volatile private var arrived = 0.0
     @Volatile private var captured = 0.0
+    @Volatile private var contentChanged = 0.0
     @Volatile private var ratio = 9.0 / 19.5
     @Volatile private var running = false
+    @Volatile private var captureBlocked = false
+    private var blockedFrames = 0
 
-    var note: String = ""
+    @Volatile var note: String = ""
         private set
 
+    /** Permission/display are active, even while the first image is still being delivered. */
+    val isCapturing: Boolean get() = running
+
     override val live: Boolean
-        get() = running && current != null && now() - arrived < 3.0
+        // MediaProjection is allowed to deliver only one image for a static screen. The projection
+        // callback reports revocation/teardown; frame age alone would incorrectly make a valid static
+        // screen disappear while the model is thinking.
+        get() = running && current != null && power.isInteractive && !keyguard.isKeyguardLocked
+
+    override val blocked: Boolean get() = captureBlocked
 
     override val frame: ByteArray? get() = current
     override val updated: Double get() = arrived
     override val capturedAt: Double get() = captured
+    override val changedAt: Double get() = contentChanged
     override val aspect: Double get() = ratio
+    override val snapshot: ScreenSnapshot
+        get() = synchronized(frameLock) { ScreenSnapshot(current, arrived, captured) }
 
     /** The display size to capture at: the real one, scaled down to [LONGEST_SIDE] on its long edge. */
     fun targetSize(): Pair<Int, Int> {
@@ -97,6 +123,7 @@ class CaptureScreen(private val context: Context) : ScreenSource {
         // Required before getVirtualDisplay on Android 14+, and where a revoked session shows up.
         val cb = object : MediaProjection.Callback() {
             override fun onStop() {
+                if (projection !== p) return // A stopped older session must not tear down a newer one.
                 DebugLog.write("capture: the projection stopped (the user revoked it)")
                 note = "screen capture was revoked"
                 teardown()
@@ -108,6 +135,11 @@ class CaptureScreen(private val context: Context) : ScreenSource {
         val (w, h) = targetSize()
         val dpi = metrics().densityDpi
         val r = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
+        projection = p
+        reader = r
+        ratio = w.toDouble() / h
+        running = true
+        note = ""
         r.setOnImageAvailableListener({ onImage(it) }, Handler(handler.looper))
         val d = runCatching {
             p.createVirtualDisplay(
@@ -118,18 +150,10 @@ class CaptureScreen(private val context: Context) : ScreenSource {
         if (d == null) {
             note = "the virtual display could not be created"
             DebugLog.write("capture: createVirtualDisplay failed")
-            runCatching { r.close() }
-            runCatching { p.stop() }
-            handler.quitSafely()
-            thread = null
+            teardown()
             return false
         }
-        projection = p
         display = d
-        reader = r
-        ratio = w.toDouble() / h
-        running = true
-        note = ""
         DebugLog.write("capture: $w x $h at $dpi dpi")
         return true
     }
@@ -139,7 +163,16 @@ class CaptureScreen(private val context: Context) : ScreenSource {
     }
 
     private fun teardown() {
-        running = false
+        synchronized(frameLock) {
+            running = false
+            current = null
+            captureBlocked = false
+            blockedFrames = 0
+            arrived = 0.0
+            captured = 0.0
+            contentChanged = 0.0
+            lastLuma = null
+        }
         runCatching { display?.release() }
         display = null
         runCatching { reader?.close() }
@@ -157,6 +190,8 @@ class CaptureScreen(private val context: Context) : ScreenSource {
         try {
             image = reader.acquireLatestImage() ?: return
             val plane = image.planes.firstOrNull() ?: return
+            val receivedAt = now()
+            val imageTimestamp = image.timestamp
             val buffer = plane.buffer
             val pixelStride = plane.pixelStride
             val rowStride = plane.rowStride
@@ -167,20 +202,67 @@ class CaptureScreen(private val context: Context) : ScreenSource {
             bitmap.copyPixelsFromBuffer(buffer)
             val cropped = if (rowPadding == 0) bitmap
             else Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height).also { bitmap.recycle() }
+            val luma = IntArray(64)
+            var n = 0
+            // Ignore the status/navigation bars; protected app content is normally black in the middle.
+            for (gy in 0 until 8) {
+                val y = (cropped.height * (0.12 + gy * 0.10)).toInt().coerceIn(0, cropped.height - 1)
+                for (gx in 0 until 8) {
+                    val x = (cropped.width * (0.06 + gx * 0.125)).toInt().coerceIn(0, cropped.width - 1)
+                    val p = cropped.getPixel(x, y)
+                    luma[n++] = (0.299 * ((p shr 16) and 0xff) + 0.587 * ((p shr 8) and 0xff) + 0.114 * (p and 0xff)).toInt()
+                }
+            }
+            val protectedFrame = ProtectedFrameHeuristic.likelyBlocked(luma)
+            blockedFrames = if (protectedFrame) (blockedFrames + 1).coerceAtMost(3) else 0
+            captureBlocked = blockedFrames >= 3
+            if (captureBlocked) {
+                note = "the current app blocks screen capture (FLAG_SECURE/DRM)"
+                DebugLog.write("capture: protected app content detected")
+            } else if (note == "the current app blocks screen capture (FLAG_SECURE/DRM)") {
+                note = ""
+            }
             val out = ByteArrayOutputStream(cropped.width * cropped.height / 4 + 4096)
             cropped.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
             cropped.recycle()
             val jpeg = out.toByteArray()
-            // The capture clock is not exposed; the frame is "captured" when it lands here, so `lag` is 0.
-            current = jpeg
-            arrived = now()
-            captured = arrived
+            // ImageReader callbacks can be delayed. Use the image's monotonic
+            // capture timestamp when available; falling back to callback arrival
+            // keeps compatibility with devices that report zero timestamps.
+            val capturedAt = if (imageTimestamp > 0L) {
+                val converted = wallAtMonotonicStart + imageTimestamp / 1_000_000_000.0
+                // A vendor clock mismatch should not make freshness unusable.
+                if (converted <= receivedAt + 1.0 && converted >= receivedAt - 300.0) converted
+                else receivedAt
+            } else receivedAt
+            synchronized(frameLock) {
+                // Ignore an image still being encoded after its capture session was stopped/replaced.
+                if (!running || reader !== this.reader) return
+                val first = current == null
+                arrived = receivedAt
+                captured = capturedAt
+                if (lumaChanged(luma)) contentChanged = receivedAt
+                current = jpeg
+                if (first) DebugLog.write("capture: first JPEG ${image.width} x ${image.height}, ${jpeg.size} bytes")
+            }
         } catch (e: Exception) {
             note = "frame failed: ${e.message}"
             DebugLog.write("capture: ${e.message}")
         } finally {
             image?.close()
         }
+    }
+
+    private var lastLuma: IntArray? = null
+
+    /** Ignore repeated/near-identical frames for settle timing, while recognizing a real layout update. */
+    private fun lumaChanged(luma: IntArray): Boolean {
+        val previous = lastLuma
+        lastLuma = luma.copyOf()
+        if (previous == null) return true
+        var changed = 0
+        for (i in luma.indices) if (abs(luma[i] - previous[i]) > 8) changed++
+        return changed >= 2
     }
 
     /** The projection API level guard, for the diagnostics screen. */

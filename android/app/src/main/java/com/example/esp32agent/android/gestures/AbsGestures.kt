@@ -15,7 +15,10 @@ import kotlin.math.roundToInt
  * Needs an Android firmware build (`hardware/flash.sh --android`, see docs/ble-protocol.md); the stock build
  * answers `err needs the android build`, which is how [probeAbsolute] tells them apart.
  */
-class AbsGestures(override val device: HidDevice) : Gestures {
+class AbsGestures(
+    override val device: HidDevice,
+    private val textInput: AndroidTextInput? = null,
+) : Gestures {
     companion object {
         /** The HID absolute range the firmware clamps to. */
         const val MAX = 32767
@@ -72,9 +75,8 @@ class AbsGestures(override val device: HidDevice) : Gestures {
         delay(TAP_GAP_MS)
     }
 
-    override suspend fun type(text: String) {
-        device.send("type $text")
-    }
+    /** Pasted, so a Chinese keyboard cannot turn the letters into pinyin (see [AndroidTextInput]). */
+    override suspend fun type(text: String) = enterText(device, textInput, text, log)
 
     override suspend fun key(combo: String) {
         device.send("key $combo")
@@ -88,8 +90,12 @@ class AbsGestures(override val device: HidDevice) : Gestures {
 
     /** AC Back, which Android maps to KEYCODE_BACK; ESC is the fallback on an older firmware. */
     override suspend fun goBack() {
-        val ok = runCatching { device.send("back") }.isSuccess
-        if (!ok) {
+        try {
+            device.send("back")
+        } catch (e: DeviceError) {
+            // Only an explicit unsupported-command reply is safe to fall back from. A timeout or link
+            // failure has an unknown outcome; sending ESC as well could navigate back twice.
+            if (e.message?.contains("unknown command", ignoreCase = true) != true) throw e
             log("the board does not know `back` (reflash with --android); sending ESC instead")
             device.send("key esc")
         }

@@ -1,6 +1,7 @@
 package com.example.esp32agent.android.gestures
 
 import com.example.esp32agent.android.board.HidDevice
+import com.example.esp32agent.android.board.DeviceError
 import com.example.esp32agent.android.util.Pt
 
 /**
@@ -35,6 +36,17 @@ interface Gestures {
 }
 
 /** Which pointer the board on the other end of the link has: `abs` answers ok only in an Android build. */
-suspend fun probeAbsolute(device: HidDevice): Boolean = runCatching {
-    device.send("abs 16384 16384")
-}.isSuccess
+suspend fun probeAbsolute(device: HidDevice): Boolean {
+    return try {
+        device.send("abs 16384 16384")
+        true
+    } catch (e: DeviceError) {
+        // The stock firmware answers one of these explicit messages. Other device
+        // failures (and BoardTimeout, which is deliberately not caught here) have
+        // an unknown outcome and must be surfaced instead of starting calibration.
+        val message = e.message.orEmpty()
+        if (message.contains("needs the android build", ignoreCase = true) ||
+            message.contains("unknown command", ignoreCase = true)
+        ) false else throw e
+    }
+}

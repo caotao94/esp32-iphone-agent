@@ -25,6 +25,14 @@
     <!-- The board is plugged into the phone's USB-C port and powered by it; the phone is the USB host. -->
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
+    <!-- App-name hints need only the apps that appear in a launcher, not all installed packages. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:name=".AgentApp"
         android:allowBackup="false"
