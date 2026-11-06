@@ -41,7 +41,7 @@ class Settings(context: Context) {
         set(v) = p.edit().putString(KEY_POINTER, v).apply()
 
     var maxSteps: Int
-        get() = p.getInt(KEY_MAX_STEPS, 100)  // Raised from 40 to 100: allow more complex tasks
+        get() = p.getInt(KEY_MAX_STEPS, 150)  // Raised from 100 to 150: complex tasks like news browsing need more steps
         set(v) = p.edit().putInt(KEY_MAX_STEPS, v.coerceIn(1, 200)).apply()
 
     /** Which board was paired last, so a run can start without picking it again. */
