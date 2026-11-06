@@ -553,7 +553,7 @@ class AgentLoop(
             // Use content differences here, rather than broad layout similarity:
             // repeated '+' taps are valid while the visible number keeps increasing.
             shot != null && Actions.sameForRetry(previous, act) && !frameChanged(shot, frame, ignore)
-        } >= 2
+        } >= 3  // Raised from 2 to 3: allow retries for filter/sort controls that may need multiple attempts
     }
 
     private fun repeatOnSameScreen(act: JObject, frame: ByteArray?): Boolean {
