@@ -71,7 +71,7 @@ String net_ip() { return ""; }
 int net_peers() { return 0; }
 bool net_up() { return false; }
 
-// The radio is BLE's alone; the preference is still accepted so the app's `coex` command keeps working.
+// The radio is BLE's alone; this stub validates the argument (the board-level gate refuses `coex` earlier).
 bool net_coex(const String &pref) { return pref == "bt" || pref == "balance" || pref == "wifi"; }
 const char *net_coex_mode() { return "bt"; }
 

@@ -39,7 +39,7 @@ When the link drops, the board releases all buttons/keys (same as before).
 ### Android builds
 
 `hardware/flash.sh --android` (`-DIA_TARGET_ANDROID=1`, see [android.md](android.md)) sends **single-touch
-USB digitizer reports** with a Finger contact identifier/count and absolute coordinates, and has no AirPlay receiver or hotspot. The app captures
+USB digitizer reports** with a Finger contact identifier/count and absolute coordinates, and has no Wi-Fi at all (no AirPlay receiver, hotspot, Wi-Fi video, OTA or CLI Wi-Fi link). The app captures
 the screen itself and the phone keeps its own Wi-Fi. Earlier Android firmware used an absolute mouse
 descriptor, which some Android input readers do not classify as a usable pointer or touch device.
 
@@ -53,7 +53,10 @@ descriptor, which some Android input readers do not classify as a usable pointer
 - USB report transmission failures return `err` instead of unconditional `ok`; `ok` still does not prove
   that a particular app reacted to the input.
 - `home` answers `ok` without moving (an absolute pointer does not drift); `move` answers `err`.
-- `stream`, `snap`, `bench`, `res`, `fps` and `coex` answer `err unsupported in the android build`.
+- `stream`, `snap`, `bench`, `vdbg`, `res`, `fps`, `coex` and `txpower` answer `err unsupported in the android build`.
+- A CLI `net` write (`net {"mode":...}`) answers `err no Wi-Fi in the android build`; `net` alone reports mode
+  `none`. The Wi-Fi video channel, the OTA listener and the CLI's Wi-Fi link (TCP 7202) are never started, so
+  firmware updates go over USB.
 - `status` keeps every key: `net` is `"none"`, `ap` is `"idle"`, and the video numbers are zero.
 
 The iPhone build answers `err needs the android build` to `abs`, `tap` and `swipe`, so an app can probe

@@ -46,16 +46,19 @@ cd C:\Users\CT\Desktop\ctbot\esp32-iphone-agent
 Firmware output is under `E:\Arduino\build\iphone` or `E:\Arduino\build\android`.
 The binaries to flash are in each target's `firmware` subdirectory.
 
-Verified locally on November 4, 2026:
+Verified locally on November 6, 2026, after merging board firmware 0.2.3:
 
-- Android 0.1.4: JVM tests pass; Lint has no errors; debug APK builds successfully.
-- Android firmware: 657,767 bytes of flash and 67,520 bytes of static RAM.
-- iPhone firmware: 1,455,631 bytes of flash and 94,316 bytes of static RAM.
-- Firmware host tests: pass with Zig 0.14.1 and undefined-behavior checks.
+- Android 0.1.5: 92 JVM tests pass; Lint has no errors; debug APK builds successfully.
+- Android firmware: 781,643 bytes of flash and 82,240 bytes of static RAM.
+- iPhone firmware: 1,490,015 bytes of flash and 113,700 bytes of static RAM.
+- Firmware host tests: not run this time. They now link mbedtls (`-lmbedcrypto`), and no C toolchain was
+  on `PATH`; CI runs them.
 - `hardware/tools/board_test.py`: Python syntax check passes.
 
-Hardware validation still requires an ESP32-S3 board and an Android phone. The build does not prove USB
-host power, absolute pointer behavior, MediaProjection coverage, or consumer Home/Back key behavior.
+On November 4 (Android 0.1.4, before the merge) the host tests passed with Zig 0.14.1 and undefined-behavior checks.
+
+Hardware: the Android app has run on one phone (nubia RedMagic, Android 16) with the touchscreen firmware from
+before the merge. The merged 0.2.3 Android firmware compiles but has not been flashed to a board yet.
 
 ## Flash the Android touchscreen firmware
 
@@ -78,7 +81,7 @@ If upload cannot enter the bootloader, hold BOOT, tap RESET, release BOOT, check
 then retry with that port. The script does not guess a device and can be previewed with `-WhatIf`.
 
 3. Disconnect the board from the PC and plug its native USB port into the unlocked Android phone (OTG).
-4. Install the 0.1.4 APK. In **Board > USB input diagnostics**, use **Read HID info** and **Scan Android input devices**.
+4. Install the APK. In **Board > USB input diagnostics**, use **Read HID info** and **Scan Android input devices**.
    The board should appear as `ESP32 Agent Touch` with `[touchscreen]` and X/Y `0..32767`; a normal touchscreen does not
    display a mouse cursor. **Test Tap** sends a center tap without starting an agent run.
 5. Run a simple task in Settings. `sent` should increase; `failed` should stay zero. Counters confirm

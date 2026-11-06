@@ -6,8 +6,9 @@
 //     no AssistiveTouch, visible mouse pointer, pointer calibration or drift correction;
 //   - `back` (consumer AC Back -> KEYCODE_BACK) joins `homescreen` (AC Home -> KEYCODE_HOME);
 //   - no AirPlay receiver and no hotspot: the Android app captures the screen itself (MediaProjection)
-//     and the phone keeps its own Wi-Fi for the model. The board never starts a radio network, which
-//     leaves the whole radio to BLE and keeps ~4.5 MB of PSRAM free.
+//     and the phone keeps its own Wi-Fi for the model. The board never starts a radio network (no Wi-Fi
+//     video, OTA listener or CLI Wi-Fi link either), which leaves the whole radio to BLE; the ~5 MB of
+//     video buffers in PSRAM are never allocated.
 //   See docs/android.md. The AirPlay sources under src/airplay/ are not called by this build; they are
 //   still compiled, so exclude that folder if you need a binary without the GPL-3.0 port.
 #pragma once

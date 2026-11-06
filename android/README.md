@@ -5,7 +5,7 @@ eyes, and the agent (planner + actor over any OpenAI-compatible vision endpoint)
 
 **Read [docs/android.md](../docs/android.md) first**: what changed versus the iPhone app, the hardware checklist
 to run before trusting anything here, the file-by-file mapping from `ios/IPhoneAgent/`, and the list of gaps.
-This is a port that has not been run on hardware yet.
+So far it has run on one phone (nubia RedMagic, Android 16); check yours against the M0 list there.
 
 ## Build
 

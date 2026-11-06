@@ -2,7 +2,8 @@
 
 ## Unreleased (main)
 
-- Android 0.1.5: stop back-and-forth navigation loops (repeated shade-open/Home-press or similar cycles); paste ASCII text too, so a Chinese (pinyin) keyboard cannot turn typed letters into a composition (HID typing only if the clipboard refuses); match apps whose launcher names only partially match the goal or appear next to Chinese text; tell the model which phone/launcher it's driving; don't discard a chosen "wait" as stale while a page loads.
+- Android 0.1.5: stop back-and-forth navigation loops (repeated shade-open/Home-press or similar cycles); paste letters too, so a Chinese (pinyin) keyboard cannot turn them into a composition, while plain digits stay typed key by key for code boxes and pickers (HID typing also when the clipboard refuses), and clear the agent's clip once the paste has landed and when a run ends; match apps whose launcher names only partially match the goal or appear next to Chinese text; tell the model which phone/launcher it's driving.
+- Android firmware on board firmware 0.2.3: still no Wi-Fi, so the Wi-Fi video channel, OTA updates and the CLI's Wi-Fi link are never started; `vdbg`, `txpower` and CLI `net` writes are refused; a failed USB touch report lifts the finger before answering `err`. The `esp32agent` CLI does not support the Android build yet (docs/android.md).
 - Android 0.1.4: look up launcher-visible installed app labels and use exact names in application-list search; continue inside an already-open app.
 - Android control: execute one action per screenshot, discard coordinates when the layout changes during model inference, retain action history across replans, block near-duplicate and cyclic taps, and stop repeated replanning. Capture always requests the full display and static images stay usable while projection is active.
 - Android input: support Chinese, emoji and other Unicode text by placing it in the Android clipboard and pasting with `Ctrl+V`.

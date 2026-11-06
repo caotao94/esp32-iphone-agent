@@ -350,6 +350,10 @@ class RelGestures(
     /** Pasted, so a Chinese keyboard cannot turn the letters into pinyin (see [AndroidTextInput]). */
     override suspend fun type(text: String) = enterText(device, textInput, text, log)
 
+    override fun forgetText() {
+        textInput?.forget()
+    }
+
     override suspend fun key(combo: String) {
         device.send("key $combo")
     }

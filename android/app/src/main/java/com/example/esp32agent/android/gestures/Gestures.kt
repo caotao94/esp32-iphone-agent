@@ -33,6 +33,9 @@ interface Gestures {
 
     /** Let go of the button and put the pointer back into a known state, whatever a gesture left. */
     suspend fun reset()
+
+    /** Clear text the last `type` left in the clipboard (a pasted password), once it has been entered. */
+    fun forgetText() {}
 }
 
 /** Which pointer the board on the other end of the link has: `abs` answers ok only in an Android build. */

@@ -16,6 +16,16 @@ arduino-cli monitor -p /dev/cu.usbmodem* -c baudrate=115200
 ```
 不加 `--sta` 时，板子会打开自己的热点 `ESP32Agent-XXXX`（密码：用下面的 `net` 读取）；Mac 也可以改连这个热点，但那样就没有外网了。
 
+## 安卓版固件
+
+用 `hardware/flash.sh --android` 刷的板子没有 AirPlay 接收端和热点：指针是绝对坐标，安卓 App 自己抓屏。用这个命令检查那种构建：
+
+```bash
+uv run hardware/tools/board_test.py android
+```
+
+它会走 [docs/android.md](../../docs/android.md) 里的检查清单（绝对移动、点击、滑动、拖动、`type`、`back`、`homescreen`，以及安卓版必须拒绝的命令）。`info`、`snap`、`stream`、`bench` 和 `udp` 不适用于它。
+
 ## 2. 只测 BLE（还没有镜像）
 
 ```bash
