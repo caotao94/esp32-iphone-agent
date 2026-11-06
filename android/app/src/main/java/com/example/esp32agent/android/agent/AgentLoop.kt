@@ -602,6 +602,22 @@ class AgentLoop(
             val round = sequence.takeLast(period)
             if (round.none { it["action"]?.str == "home" || it["action"]?.str == "back" }) continue
             if (round.all { sameMove(it, round[0]) }) continue  // one move repeated: [repeating] handles that
+            // Check if coordinates are progressing (e.g. tapping different list items): if the tap/swipe
+            // coordinates in this round differ significantly from those in the previous round, it's not a loop.
+            val coordsChanged = round.any { curr ->
+                val prev = sequence[sequence.indexOf(curr) - period]
+                val currAction = curr["action"]?.str
+                if (currAction == "tap") {
+                    val dx = kotlin.math.abs((curr["x"]?.double ?: 0.0) - (prev["x"]?.double ?: 0.0))
+                    val dy = kotlin.math.abs((curr["y"]?.double ?: 0.0) - (prev["y"]?.double ?: 0.0))
+                    dx > 50 || dy > 50  // moved more than 50 units between rounds
+                } else if (currAction == "swipe") {
+                    val dx2 = kotlin.math.abs((curr["x2"]?.double ?: 0.0) - (prev["x2"]?.double ?: 0.0))
+                    val dy2 = kotlin.math.abs((curr["y2"]?.double ?: 0.0) - (prev["y2"]?.double ?: 0.0))
+                    dx2 > 50 || dy2 > 50
+                } else false
+            }
+            if (coordsChanged) continue  // coordinates progressing: not a loop
             val twin = moves[moves.size - period]
             val twinShot = _shots.value[twin.index] ?: continue
             // The same layout as when the twin was chosen: the round brought the screen back to where it was.
