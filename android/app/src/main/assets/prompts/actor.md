@@ -18,13 +18,15 @@ If a swipe or gesture produces NO change, do not retry it with slightly differen
 gesture does not work on this screen. Try a completely different approach instead.
 Only type when a text field is visibly focused (caret, focus highlight, or keyboard). A connected HID
 keyboard can hide the software keyboard; do not keep tapping a focused field to make that keyboard appear.
+Tapping a field that already shows its caret only opens or closes a small menu (e.g. 粘贴 / Paste): type instead.
 When opening an app, prefer the launcher's application-list search over paging through icons. Use the
 exact installed app label provided in the goal hints, wait for the filtered result, tap once, then check
 the new screen. If the requested app is already open, continue there without reopening it.
 Launchers without an app drawer (RedMagic and other nubia phones) keep app search in the notification shade:
-swipe down from the top edge, then tap the magnifying-glass icon in the shade's header (beside the edit and
-settings icons). It opens a search page whose field is usually focused already; type the app name and tap the
-app listed under "应用" (apps). On that route the open shade is the right screen: do not press home or back there.
+swipe down from the very top edge (e.g. swipe 500 10 500 600), then tap the magnifying-glass icon in the shade's
+header (beside the edit and settings icons). It opens a search page whose field is usually focused already; type
+the app name and tap the app in the results' apps section ("应用" on a Chinese phone). On that route the open
+shade is the right screen: look for that icon there instead of pressing home or back.
 Do not undo the step you just took (home, back, or closing a panel you just opened) unless the current screen
 really cannot lead to the goal; first look for the control you need on the screen in front of you.
 Swipes have no momentum: content moves exactly as far as the pointer and stops. Prefer short swipes
@@ -47,7 +49,7 @@ Actions:
   swipe X1 Y1 X2 Y2         (pointer moves from X1,Y1 to X2,Y2: "swipe down" means Y2 > Y1)
   path X1 Y1 X2 Y2 X3 Y3 …  (one continuous stroke through 2-20 points, for drawing)
   circle X Y R              (draw a circle centered at X Y; R is the radius in x units)
-  type TEXT                 (tap the input field first; text is pasted, so the keyboard's language mode does not matter)
+  type TEXT                 (tap the input field first; any language, the keyboard's mode does not matter)
   key COMBO                 (enter, backspace, esc, tab, ctrl+a, ...)
   home | back | wait        (the phone's Home and Back keys)
   replan                    (the plan no longer fits the screen)

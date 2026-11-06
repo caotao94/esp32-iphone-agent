@@ -262,6 +262,37 @@ class AgentLoopTest {
     }
 
     @Test
+    fun roundTripsFarApartDoNotAddUpToAStop() = runTest {
+        // A round trip early, eleven productive taps, then a round trip and its repeat. Counted over the whole run,
+        // the third detection would stop it; the early one is outside the window, so the run is only warned.
+        val screen = FakeScreen(afterFrames = (2..40).toList())
+        val phone = FakeGestures()
+        val actor = FakeModel(
+            replies = listOf(
+                "DO: swipe 500 10 500 600", "DO: home", "DO: swipe 500 10 500 600",
+                "DO: home",  // round trip 1, 3 moves in: warned
+                "DO: tap 100 100", "DO: tap 200 200", "DO: tap 300 300", "DO: tap 400 400", "DO: tap 500 500",
+                "DO: tap 600 600", "DO: tap 700 700", "DO: tap 800 800", "DO: tap 100 200", "DO: tap 200 300",
+                "DO: tap 300 400",
+                "DO: swipe 500 10 500 600", "DO: home", "DO: swipe 500 10 500 600",
+                "DO: home",  // round trip 2, 17 moves in (14 after the first): the count restarts, warned
+                "DO: home",  // insists: performed
+                "DO: swipe 500 10 500 600",  // round trip 3, right after the second: warned, not stopped
+                "DO: done opened the search",
+            ),
+        )
+        val loop = loop(this, screen, phone, actor, sceneChanged = { a, b, _ -> layout(a) != layout(b) })
+
+        loop.start("Open the app search")
+        loop.join()
+
+        assertEquals(22, actor.calls.size)
+        assertEquals(listOf(4, 19, 21), actor.calls.indices.filter { actor.calls[it].text.contains("back and forth") })
+        assertEquals(18, phone.calls.size)
+        assertEquals("done", loop.actionNames().last())
+    }
+
+    @Test
     fun openingDifferentItemsFromTheSameListIsNotARoundTrip() = runTest {
         // Back returns to the same list layout every time, but each round opens another item.
         val screen = FakeScreen(afterFrames = listOf(2, 3, 4, 5, 6, 7))
@@ -285,22 +316,23 @@ class AgentLoopTest {
     }
 
     @Test
-    fun aWaitIsPerformedEvenWhenThePageChangesWhileThinking() = runTest {
-        val screen = FakeScreen(afterFrames = listOf(3))
+    fun pastedTextIsClearedOnceTheScreenSettledAndWhenTheRunEnds() = runTest {
+        val screen = FakeScreen(afterFrames = listOf(2, 3))
         val phone = FakeGestures()
-        var replies = 0
+        val forgetsBeforeEachLook = mutableListOf<Int>()
         val actor = FakeModel(
-            replies = listOf("DO: wait", "DO: done loaded"),
-            beforeReply = { if (replies++ == 0) screen.publish(2) },  // the page loads during the request
+            replies = listOf("DO: tap 200 400", "DO: type secret-pass", "DO: done signed in"),
+            beforeReply = { forgetsBeforeEachLook += phone.forgets },
         )
-        val loop = loop(this, screen, phone, actor, FakeModel(fallback = "Wait for the page to load"))
+        val loop = loop(this, screen, phone, actor)
 
-        loop.start("Wait for the results")
+        loop.start("Sign in with the password")
         loop.join()
 
-        assertEquals(listOf("plan", "wait", "done"), loop.actionNames())
-        assertEquals(1, screen.afterActionCalls)
-        assertEquals(0, screen.settledCalls)
+        assertEquals(listOf("tap", "type"), phone.calls.map { it.name })
+        // Not after the tap; right after the typed step settled, before the next look; once more at the end.
+        assertEquals(listOf(0, 0, 1), forgetsBeforeEachLook)
+        assertEquals(2, phone.forgets)
     }
 
     @Test
@@ -470,6 +502,13 @@ class AgentLoopTest {
         }
 
         override suspend fun reset() = Unit
+
+        var forgets = 0
+            private set
+
+        override fun forgetText() {
+            forgets++
+        }
     }
 
     private companion object {

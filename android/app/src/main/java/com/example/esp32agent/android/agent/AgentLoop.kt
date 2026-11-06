@@ -88,6 +88,8 @@ class AgentLoop(
     private var staleProposals = 0
     /** Round trips between the same screens (open something, home/back, open it again). */
     private var roundTrips = 0
+    /** Move index where the last round trip was detected, for windowed counting. */
+    private var lastRoundTripAt = -1
     private var lastActionStarted = 0.0
     private var job: Job? = null
 
@@ -95,6 +97,8 @@ class AgentLoop(
         const val MAX_NO_PROGRESS_TAPS = 3
         /** The third repeated round trip ends the run; the first two only warn the actor. */
         const val MAX_ROUND_TRIPS = 3
+        /** Round trips within this many moves count toward the limit; older ones are forgotten. */
+        const val ROUND_TRIP_WINDOW = 10
         val MOVES = setOf("tap", "swipe", "path", "circle", "type", "key", "home", "back")
     }
 
@@ -140,6 +144,7 @@ class AgentLoop(
         stuckReplans = 0
         staleProposals = 0
         roundTrips = 0
+        lastRoundTripAt = -1
         lastActionStarted = 0.0
         if (!traceStarted) trace?.start(task)
         _running.value = true
@@ -147,6 +152,7 @@ class AgentLoop(
             try {
                 run()
             } finally {
+                phone?.forgetText()  // a stop or an error between a paste and its settle must not leave text behind
                 _running.value = false
                 onFinish?.invoke()
             }
@@ -174,6 +180,7 @@ class AgentLoop(
         stuckReplans = 0
         staleProposals = 0
         roundTrips = 0
+        lastRoundTripAt = -1
     }
 
     /** Show a run without running it (a stored trace). */
@@ -441,17 +448,14 @@ class AgentLoop(
             val current = s.snapshot.frame ?: throw BlindError()
             // The model may take seconds to reply while a page finishes loading. Never
             // apply its coordinates (or its completion decision) to a different layout.
-            // A wait has neither, and a changing page is what it waits for, so it is never stale; it does
-            // not reset the stale count either, so a page that never settles still ends the run.
-            val waiting = name == "wait"
-            if (!waiting && sceneChanged(seen, current, spots)) {
+            if (sceneChanged(seen, current, spots)) {
                 staleProposals++
                 record(null, jObj("action" to "stale".j(), "reason" to "screen layout changed while the model was thinking; action was not sent".j()))
                 if (staleProposals >= 3) throw ActionLoopError("the screen keeps changing before actions can be verified; stop and retry on a stable screen")
                 s.settled()
                 return false
             }
-            if (!waiting) staleProposals = 0
+            staleProposals = 0
             if (name == "replan") {
                 record(seen, act)
                 replan(stuck = true)
@@ -498,6 +502,8 @@ class AgentLoop(
                 "step_index" to stepList.lastIndex.j(), "action" to name.j(),
                 "changed" to changed.j(), "observed_after_action" to observed.j(),
             ))
+            // The paste has landed once the screen settled; a pasted password must not stay in the clipboard.
+            if (name == "type") phone?.forgetText()
             noteProgress(act, changed)
             return false
         } finally {
@@ -687,6 +693,11 @@ class AgentLoop(
             // Warned once in this request and the actor insists: let it (it may be working through items),
             // without counting that proposal twice. The next round trip counts again.
             if (!warnedRoundTrip && roundTrip(acts2[0], frame)) {
+                val movesSoFar = stepList.count { it["plan"] == null && it["action"]?.str in MOVES }
+                if (lastRoundTripAt >= 0 && movesSoFar - lastRoundTripAt > ROUND_TRIP_WINDOW) {
+                    roundTrips = 0  // old detection outside the window: reset and start counting fresh
+                }
+                lastRoundTripAt = movesSoFar
                 if (++roundTrips >= MAX_ROUND_TRIPS) {
                     throw ActionLoopError("the agent kept going back and forth between the same screens; stopped to avoid a navigation loop")
                 }
