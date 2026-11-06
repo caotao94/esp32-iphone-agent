@@ -89,8 +89,9 @@ jobs:
         run: xcrun simctl bootstatus "$SIM_UDID" -b
       - name: Test (simulator)
         run: |
+          # no diagnostics collection after the run: it took ~2 min, for logs nobody reads when tests pass
           xcodebuild test-without-building -scheme IPhoneAgent -destination "id=$SIM_UDID" \
-            -derivedDataPath build-sim CODE_SIGNING_ALLOWED=NO $ONLY_TESTING
+            -derivedDataPath build-sim CODE_SIGNING_ALLOWED=NO -collect-test-diagnostics never $ONLY_TESTING
 
   firmware:
     needs: changes
@@ -108,8 +109,10 @@ jobs:
         run: hardware/flash.sh --build-only
       - name: Build the Android variant (absolute pointer, no AirPlay, no hotspot)
         run: hardware/flash.sh --android --build-only
-      - name: Host tests (bplist, GOP buffer)
-        run: make -C hardware/tests
+      - name: Host tests (bplist, GOP buffer, CLI protocol, Bonjour TXT, …)
+        run: |
+          sudo apt-get install -y libmbedtls-dev
+          make -C hardware/tests
 
   android:  # the Android port (docs/android.md)
     needs: changes
