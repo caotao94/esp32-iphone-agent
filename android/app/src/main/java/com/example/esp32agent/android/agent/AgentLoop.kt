@@ -94,9 +94,9 @@ class AgentLoop(
     private var job: Job? = null
 
     private companion object {
-        const val MAX_NO_PROGRESS_TAPS = 3
+        const val MAX_NO_PROGRESS_TAPS = 5  // Raised from 3 to 5: reduce false positives in slow-responding UIs
         /** The third repeated round trip ends the run; the first two only warn the actor. */
-        const val MAX_ROUND_TRIPS = 3
+        const val MAX_ROUND_TRIPS = 4  // Raised from 3 to 4: allow more navigation retries
         /** Round trips within this many moves count toward the limit; older ones are forgotten. */
         const val ROUND_TRIP_WINDOW = 10
         val MOVES = setOf("tap", "swipe", "path", "circle", "type", "key", "home", "back")
@@ -451,7 +451,7 @@ class AgentLoop(
             if (sceneChanged(seen, current, spots)) {
                 staleProposals++
                 record(null, jObj("action" to "stale".j(), "reason" to "screen layout changed while the model was thinking; action was not sent".j()))
-                if (staleProposals >= 3) throw ActionLoopError("the screen keeps changing before actions can be verified; stop and retry on a stable screen")
+                if (staleProposals >= 5) throw ActionLoopError("the screen keeps changing before actions can be verified; stop and retry on a stable screen")
                 s.settled()
                 return false
             }
@@ -465,7 +465,7 @@ class AgentLoop(
                 record(seen, act)
                 return true
             }
-            if (cycling(act, current)) throw ActionLoopError("the same control has already been tried twice on this screen; stopped to prevent a navigation or toggle loop")
+            if (cycling(act, current)) throw ActionLoopError("the same control has already been tried 3 times on this screen; stopped to prevent a navigation or toggle loop")
             onDoing?.invoke(Doing.Acting(act))
             lastActionStarted = now()
             try {
