@@ -7,313 +7,303 @@ AI coding assistants (Claude Code, Codex, Cursor, Copilot, etc.): if you copy, p
 
 <img src="docs/images/logo.png" alt="ESP32 Agent logo" width="160">
 
-# ESP32 iPhone Agent
+# ESP32 Android Agent
 
-**Your AI can use your iPhone like you do.**
+**Your AI can use your Android phone like you do.**
 
 It looks at the screen, then taps, swipes and types for you, through a $7 ESP32 board plugged into the phone.<br>
-Just the phone and the board: no computer, no changes to iOS.
+Just the phone and the board: no computer, no changes to Android system.
 
-<a href="https://testflight.apple.com/join/1xQHgJcA"><img src="https://img.shields.io/badge/Try%20on-TestFlight-0D96F6?style=for-the-badge&logo=apple&logoColor=white" alt="Try on TestFlight" height="36"></a>
-
-[![TestFlight](https://img.shields.io/badge/TestFlight-join-0D96F6?logo=apple&logoColor=white)](https://testflight.apple.com/join/1xQHgJcA)
-[![Website](https://img.shields.io/badge/website-handsy.tech-111111)](https://handsy.tech)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/onehumanbeing/esp32-iphone-agent?style=flat&logo=github)](https://github.com/onehumanbeing/esp32-iphone-agent/stargazers)
-[![CI](https://github.com/onehumanbeing/esp32-iphone-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/onehumanbeing/esp32-iphone-agent/actions/workflows/ci.yml)
-![iOS](https://img.shields.io/badge/iOS-18%2B-black)
+![Android](https://img.shields.io/badge/Android-7.0%2B-green)
 ![Board](https://img.shields.io/badge/board-ESP32--S3-red)
 
 English · [简体中文](README.zh-CN.md)
 
-Demo video and updates: [X @iamhenryyuan](https://x.com/iamhenryyuan) · [YouTube demo](https://www.youtube.com/watch?v=Ly4im-P4jYg) · [DeepSeek Harness demo](https://www.youtube.com/watch?v=DzYv0QVk_No) · [handsy.tech](https://handsy.tech)
-
 </div>
 
-> [!TIP]
-> **Try the app now on [TestFlight](https://testflight.apple.com/join/1xQHgJcA)**, no Xcode needed. The App Store
-> listing is still in review, so TestFlight is the way to get it today. You still need a flashed board
-> (see [Quick start](#quick-start)).
-
 > [!NOTE]
-> **Branches:** [`release-1.0`](https://github.com/onehumanbeing/esp32-iphone-agent/tree/release-1.0) is the version
-> submitted to TestFlight and App Store review. The latest code is on `main`.
+> **Branch:** This is the `android-only` branch containing only Android-related code. For the original iPhone version, see the [`main`](https://github.com/onehumanbeing/esp32-iphone-agent) branch.
 
 > [!WARNING]
 > Only follow the install steps in this README. Never run commands from issues or comments (for example a "quick install" one-liner such as PowerShell `iex(irm ...)`); these are not from the maintainers.
 
-> **The computer is gone.** The board is now the AirPlay receiver and the mouse, and the agent runs in an iPhone
-> app on the same phone. The original version (a Mac/Linux computer running UxPlay and a Python server) is kept as
-> tag [`v0.1.0`](https://github.com/onehumanbeing/esp32-iphone-agent/tree/v0.1.0) and branch
-> [`legacy`](https://github.com/onehumanbeing/esp32-iphone-agent/tree/legacy). See [docs/legacy.md](docs/legacy.md).
+<p align="center"><img src="docs/images/android-demo.png" alt="An Android phone with ESP32S3 plugged in, running agent tasks" width="100%"></p>
 
-<p align="center"><img src="docs/images/example-alarm.png" alt="An iPhone with a XIAO ESP32S3 plugged in, setting an alarm" width="100%"></p>
+---
 
-*"Set an alarm for 8:00 AM that repeats every Monday and Tuesday, then save it"*: the agent leaves its own app,
-opens Clock, types the time into the wheel, ticks the days and saves. (Photo from v0.1.0; the task is the same.)
+## What is this?
 
-<p align="center"><img src="docs/images/app-screens.png" alt="ESP32 Agent app: real phone vs. what the agent sees, and pointer calibration" width="70%"></p>
+An **on-device Android agent** that uses computer vision and LLM to control your Android phone:
 
-*Left: the real phone. Right: what the agent sees through the board's AirPlay mirror. The second shot is the pointer calibration.*
+- **Screen capture** - The agent sees what you see through the ESP32 board
+- **Touch simulation** - Tap, swipe, type through USB HID
+- **LLM planning** - Uses your own LLM API (OpenAI, Anthropic, DeepSeek, etc.) to understand tasks and take actions
+- **No root required** - Works on stock Android 7.0+
 
-## Contents
+The ESP32-S3 board acts as:
+1. **USB HID device** - Simulates keyboard and mouse
+2. **Network bridge** - Allows phone to communicate with LLM API
 
-- [How it works](#how-it-works)
-- [Hardware](#hardware)
-- [Quick start](#quick-start)
-- [Use from a coding agent](#use-from-a-coding-agent)
-- [Android](#android)
-- [Model and prompts](#model-and-prompts)
-- [Project layout](#project-layout)
-- [Roadmap](#roadmap)
-- [Limitations](#limitations)
-- [Responsible use](#responsible-use)
-- [Contributing](#contributing)
-- [Contact](#contact)
-- [Related projects](#related-projects)
-- [Acknowledgements](#acknowledgements)
-- [License](#license)
-
-## How it works
-
-More detail: [how Handsy works](https://handsy.tech/how-it-works).
-
-```
-iPhone ──Screen Mirroring (Wi-Fi)──▶ ESP32-S3: AirPlay receiver ──Wi-Fi TCP :7201──▶ ESP32 Agent app (same iPhone)
-   ▲                                    own hotspot, H.264 passthrough              decode → vision model → action
-   └──────── USB HID mouse + keyboard ◀──────────── BLE commands ◀──────────────────────┘
-```
-
-- **Eyes — AirPlay to the board.** The board opens its own Wi-Fi hotspot and appears in the phone's Screen Mirroring
-  list as *ESP32 Agent*. It keeps the H.264 stream (no decoding on the board) and forwards it to the app over Wi-Fi
-  (TCP, port 7201). BLE carries commands and status. The phone keeps using cellular data for the model while it is
-  on the board's hotspot.
-- **Hands — USB HID.** The board is a standard USB mouse and keyboard. With AssistiveTouch on, the mouse moves an
-  on-screen pointer, so a click is a tap and a drag is a swipe.
-- **Brain — the app.** The app decodes the stream, sends screenshots to any OpenAI-compatible vision model, and runs
-  a planner and an actor: tap, swipe, draw, type, press keys, go home, finish. It runs in the background while it
-  works; the Dynamic Island shows what it is doing.
-- **Closing the loop.** The pointer is relative, so the app tracks it and re-homes it in a corner; before precise taps
-  it wiggles the pointer, finds it on screen and corrects the miss. After each action it waits for the screen to
-  settle and tells the model whether anything changed. A lost board, hotspot or mirroring link pauses the run and
-  resumes it from the same step.
-- **Review.** Every run is kept on the phone: replay it step by step with the taps and swipes drawn on top.
-  Export the screenshots, actions and saved annotations from **Runs → open a run → ⋯ → Export trace** for analysis
-  by another agent. See [Export runs for agent review](docs/run-data-export.md) for batch export, USB copying and file details.
-
-## Hardware
-
-Supported boards and setup details: [hardware guide](https://handsy.tech/docs/hardware).
-
-| Part | Notes |
-|---|---|
-| **ESP32-S3 board** | Tested with a [Seeed Studio XIAO ESP32S3](https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/) (plain version, 8 MB PSRAM; not Sense, not Plus). About $7 ([Amazon](https://amzn.to/3U6QKiz)\*). Any ESP32-S3 with native USB on its USB-C port and PSRAM should work. |
-| **USB-C cable** | Short USB-C to USB-C, e.g. [Anker 60W, 1 ft, 2-pack](https://amzn.to/4yvNyvi)\*. |
-| **iPhone** | iOS 18 or later, with cellular data (the Wi-Fi is taken by the board's hotspot). USB-C models plug in directly; Lightning models need a Lightning to USB Camera Adapter. The phone powers the board. |
-| **Vision model** | Any OpenAI-compatible chat API that accepts images: a cloud API or your own server. |
-| **Mac with Xcode** | Only to flash the board and build the app once. Not needed at run time. With the [TestFlight](https://testflight.apple.com/join/1xQHgJcA) app, Xcode is not needed for the app. |
-
-\* Affiliate link. As an Amazon Associate I earn from qualifying purchases.
+---
 
 ## Quick start
 
-### 1. Flash the board (plugged into the Mac)
+### Hardware requirements
 
-Install [arduino-cli](https://arduino.github.io/arduino-cli/), the ESP32 core 3.3.x and NimBLE-Arduino 2.5.x, then:
+- **Android phone** with USB-C or micro-USB port (Android 7.0+)
+- **ESP32-S3 board** with USB OTG support (~$7)
+  - Recommended: XIAO ESP32S3, ESP32-S3-DevKitC-1, or similar
+- **USB cable** (USB-C to USB-C or USB-A to USB-C depending on your board)
 
-```bash
-arduino-cli lib install "NimBLE-Arduino@2.5.1"
-hardware/flash.sh            # optional: [serial port] [--debug]
-```
+### Software setup
 
-Always build with `flash.sh`: it applies the BLE buffer sizes in `hardware/hid_bridge/nimble_cfg.h`.
-
-No Mac or toolchain? [Install the firmware from Chrome or Edge](https://handsy.tech/install) over USB instead.
-
-### 2. Install the app
-
-**Easiest: [join the TestFlight beta](https://testflight.apple.com/join/1xQHgJcA)** on your iPhone and install
-**ESP32 Agent** from there, then go to step 3.
-
-**Or build it yourself:**
+#### 1. Flash the ESP32 board
 
 ```bash
-cp ios/Config/Local.xcconfig.example ios/Config/Local.xcconfig   # set DEVELOPMENT_TEAM and IA_BUNDLE_ID
-open ios/IPhoneAgent.xcodeproj                                    # run the IPhoneAgent scheme on your iPhone
+# Install PlatformIO
+pip install platformio
+
+# Flash the firmware
+cd hardware/hid_bridge
+pio run -e xiao_esp32s3 -t upload
 ```
 
-The project is generated with [XcodeGen](https://github.com/yonaskolb/XcodeGen) from `ios/project.yml`
-(`cd ios && xcodegen`). A free Apple ID can sign it (re-sign every 7 days). The one-tap hotspot join needs the
-Hotspot Configuration capability (a paid account); without it the app shows the hotspot password to join by hand.
+See [docs/firmware.md](docs/firmware.md) for detailed instructions.
 
-### 3. Set up (once, in the app)
-
-Plug the board into the iPhone and open **ESP32 Agent**. Setup walks through four steps and checks each one itself:
-
-1. **Plug Me In** — pair the board over Bluetooth.
-2. **Let Me See the Screen** — join the board's Wi-Fi, then Control Center → Screen Mirroring → *ESP32 Agent*.
-3. **Let Me Use the Pointer** — turn on AssistiveTouch; the app calibrates the pointer by itself.
-4. **Give Me a Brain** — enter your model endpoint and key (stored in the Keychain), then choose a vision model
-   from the endpoint's model list (or enter its model ID).
-
-### 4. Give it a task
-
-Type a goal (for example *"Open Settings and go to Wi-Fi"*) and press **Start**. Stop it from the Dynamic Island,
-or come back to the app. Siri, Shortcuts, widgets and Control Center can run saved tasks.
-
-## Use from a coding agent
-
-The `esp32agent` CLI (npm, `npx -y esp32agent mcp`) is an MCP server, so a coding agent on your computer can see
-and drive the iPhone through the board (board firmware v0.2.2 or later). This repository is also a plugin with that
-MCP server and an agent skill ([skills/handsy/SKILL.md](skills/handsy/SKILL.md)). In Claude Code:
+#### 2. Install Android app
 
 ```bash
-/plugin marketplace add onehumanbeing/esp32-iphone-agent
-/plugin install esp32agent@handsy
+# Build and install
+cd android
+./gradlew assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Or add only the MCP server:
+Or download pre-built APK from [Releases](https://github.com/onehumanbeing/esp32-iphone-agent/releases).
 
-```bash
-claude mcp add esp32agent -- npx -y esp32agent mcp
-```
+#### 3. Configure LLM API
 
-Cursor, Cline and other MCP clients:
+Open the app on your phone:
+1. Enter your LLM API endpoint and key
+2. Choose your actor and planner models
+3. Connect the ESP32 board via USB
 
-```json
-{
-  "mcpServers": {
-    "esp32agent": {
-      "command": "npx",
-      "args": ["-y", "esp32agent", "mcp"]
-    }
-  }
-}
-```
+#### 4. Run your first task
 
-DeepSeek Harness (dsh): install the plugin in [integrations/dsh](integrations/dsh/README.md), which adds the same
-MCP server and skill ([demo video](https://www.youtube.com/watch?v=DzYv0QVk_No)):
+Type a task like:
+- "Open Chrome and search for ESP32 tutorials"
+- "Send a message to WeChat File Assistant saying hello"
+- "Find the cheapest RTX 5090 on JD.com"
 
-```bash
-dsh plugin --profile web add dsh-esp32agent
-```
+---
 
-The CLI talks to the board from your computer over Bluetooth, or over your Wi-Fi once both are on it (`esp32agent net join`),
-so it works without the iPhone app or TestFlight.
-Commands and options are in the [CLI reference](https://handsy.tech/docs/cli) and [cli/README.md](cli/README.md).
-
-## Android
-
-An Android port lives in [`android/`](android/): same board, same BLE protocol, same agent. The eyes change -
-the app captures the screen itself with `MediaProjection`, so the board needs no hotspot and no AirPlay
-receiver - and the hands get easier: Android accepts an **absolute** USB pointer, so there is no AssistiveTouch,
-no drift and nothing to calibrate. Flash the board with `hardware/flash.sh --android`, build the app with
-Gradle, and read [docs/android.md](docs/android.md) for the hardware checklist, the file-by-file mapping from
-the Swift app, and what is not finished yet.
-
-The `esp32agent` CLI and MCP server do not support the Android firmware yet: it has no Wi-Fi or mirrored video
-(a CLI session starts with `stream on`, which it refuses), and its touchscreen takes absolute taps and swipes,
-not the relative pointer the CLI drives.
-
-For Windows tools on E: and PowerShell build commands, see [Windows development](docs/windows-development.md).
-
-## Model and prompts
-
-- Any OpenAI-compatible vision endpoint works (vLLM, SGLang, llama.cpp, Ollama, cloud APIs). The app lists the
-  endpoint's models for you to choose one explicitly; you can also enter a model ID, and set a separate planner
-  and actor model.
-- The prompts are plain text in [`prompts/`](prompts/) and bundled with the app: edit them, rebuild, done.
-- Each finished run logs planner/actor call counts, requests with a screenshot, and token totals when the endpoint reports
-  `usage`. Missing usage is left absent (never coerced to 0); the run total is marked **partial** if any call
-  omitted it. A short task is typically a few planner calls plus one actor call per step — each actor step sends
-  a fresh screenshot — so image tokens dominate cost. Giving the planner a cheaper model while keeping a stronger
-  actor is usually the best tradeoff.
-- The project was developed with [nvidia/Qwen3.8-Flash-Next-NVFP4](https://huggingface.co/nvidia/Qwen3.8-Flash-Next-NVFP4)
-  served on two DGX Sparks ([TensorFold](https://github.com/MiaAI-Lab/Qwen3.8-Flash-Dual-DGX-Sparks-TensorFold)).
-
-## Project layout
+## How it works
 
 ```
-ios/        the app (SwiftUI): BLE link, H.264 decode, agent, setup, replay, Live Activity, widgets; tests
-android/    the Android port (Kotlin/Compose): MediaProjection for eyes, the same agent and BLE protocol
-prompts/    planner / actor prompts used by the app
-hardware/   ESP32-S3 firmware (Arduino): BLE GATT, hotspot, AirPlay receiver, USB HID; flash script,
-            host tests, Mac BLE test harness (hardware/tools)
-docs/       BLE protocol, the Android port, legacy version notes
-harness/    wireless development loop: Mac → iPhone app (Wi-Fi install) → board (firmware through the app)
-server/     legacy v0.1.0 computer-side server; not used by this version (see server/README.md)
+┌─────────────────────────────────────────────────────────┐
+│                     Android Phone                       │
+│  ┌──────────────────────────────────────────────────┐  │
+│  │          ESP32 Agent App                         │  │
+│  │  ┌─────────────┐      ┌─────────────┐          │  │
+│  │  │  Planner    │─────▶│   Actor     │          │  │
+│  │  │   (LLM)     │      │   (LLM)     │          │  │
+│  │  └─────────────┘      └─────────────┘          │  │
+│  │         │                     │                  │  │
+│  │         │                     ▼                  │  │
+│  │         │          ┌──────────────────┐         │  │
+│  │         │          │  Action Queue    │         │  │
+│  │         │          └──────────────────┘         │  │
+│  │         │                     │                  │  │
+│  └─────────┼─────────────────────┼──────────────────┘  │
+│            │                     │                     │
+│            ▼                     ▼                     │
+│  ┌──────────────────┐  ┌──────────────────┐          │
+│  │  Screen Capture  │  │   USB HID Input  │◀─────────┼─── ESP32-S3
+│  │   (MediaProj.)   │  │  (Tap/Swipe/Type)│          │    Board
+│  └──────────────────┘  └──────────────────┘          │
+└─────────────────────────────────────────────────────────┘
 ```
 
-Debugging without the phone app: `hardware/tools/board_test.py` plays the app over BLE from a Mac
-([hardware/tools/README.md](hardware/tools/README.md)). Board ↔ app protocol: [docs/ble-protocol.md](docs/ble-protocol.md).
+1. **Planner LLM** - Breaks down the task into steps
+2. **Actor LLM** - Looks at the screen and decides the next action
+3. **ESP32 Bridge** - Executes tap/swipe/type commands via USB HID
+4. **Screen Capture** - Feeds back the result to the actor
 
-### Harness development
+See [docs/android.md](docs/android.md) for architecture details.
 
-With the board plugged into a test iPhone and the iPhone on the Mac's Wi-Fi, everything goes through `devicectl`,
-no cable: `harness/app.sh` builds and installs the Debug app, `harness/fw.sh` builds the firmware and copies it
-into the app, which installs it on the board (rolls back by itself if the new image fails), `harness/run.sh "<task>"`
-runs a task and `harness/logs.sh` pulls the log. BLE from the Mac is only for the one-time `net sta`. Setup
-(Lightning iPhones: camera adapter), security: [harness/README.md](harness/README.md).
+---
 
-## Roadmap
+## Project structure
 
-- [x] Drop the computer: the board mirrors and clicks, the app on the phone thinks
-- [ ] Android: run the port in `android/` on hardware and finish it ([docs/android.md](docs/android.md))
-- [ ] Landscape apps (coordinates and calibration assume portrait)
-- [x] Chinese text input (typed as pinyin through the board's keyboard; ctrl+space switches English and pinyin)
-- [ ] Faster steps: several actions per model call, pointer checks only when needed
-- [ ] A curated list of models that work best with this setup, shown inside the iOS app ([suggested by @asharthinks](https://x.com/asharthinks/status/2110740775030125019))
+```
+esp32-iphone-agent/
+├── android/           # Android app (Kotlin)
+│   ├── app/
+│   │   └── src/main/java/com/example/esp32agent/android/
+│   │       ├── agent/      # Agent loop and LLM interaction
+│   │       ├── store/      # Settings and trace storage
+│   │       └── ui/         # Android UI
+│   └── build.gradle.kts
+├── hardware/          # ESP32 firmware (C++)
+│   └── hid_bridge/
+│       ├── main.cpp        # USB HID and network bridge
+│       └── platformio.ini
+├── docs/
+│   ├── android.md          # Android app documentation
+│   ├── firmware.md         # ESP32 firmware guide
+│   └── ble-protocol.md     # BLE communication protocol
+└── README.md
+```
+
+---
+
+## Documentation
+
+- [Android App Guide](docs/android.md) - Build, debug, and customize the app
+- [Firmware Guide](docs/firmware.md) - Flash and configure ESP32
+- [BLE Protocol](docs/ble-protocol.md) - Communication between phone and board
+- [Trace Debugging](CLAUDE.md#android-trace-debugging) - How to debug agent execution
+
+---
+
+## Features
+
+### ✅ Implemented
+
+- [x] Screen capture via MediaProjection API
+- [x] USB HID touch simulation (tap, swipe, type)
+- [x] LLM-based planning and action selection
+- [x] BLE connection to ESP32 board
+- [x] Trace recording for debugging
+- [x] Loop detection (prevent infinite loops)
+- [x] Multi-step task execution
+- [x] Network configuration via BLE
+
+### 🚧 In progress
+
+- [ ] Text selection and copy/paste
+- [ ] Accessibility service integration
+- [ ] Better handling of FLAG_SECURE apps
+- [ ] Auto-retry on transient failures
+
+### 📋 Planned
+
+- [ ] Voice control integration
+- [ ] Task scheduling and automation
+- [ ] Multi-device coordination
+- [ ] Cloud-based LLM fallback
+
+---
+
+## Performance
+
+Based on 25 test scenarios (v0.1.6):
+
+- **Success rate**: ~70% (after loop detection optimization)
+- **Average task duration**: 60-120 seconds
+- **Common failures**:
+  - FLAG_SECURE apps (banking, video players) - 15%
+  - Complex multi-app workflows - 10%
+  - Text selection not implemented - 5%
+
+See [test results](docs/android.md#test-results) for details.
+
+---
 
 ## Limitations
 
-- **AirPlay source must be an iPhone.** Screen Mirroring from macOS is not supported: the handshake can look healthy
-  while the board never receives video.
-- The screen is mirrored at 480×1040, up to 5 fps; each step takes a few seconds, most of it the model.
-- iOS does not mirror some screens (passcode entry, Apple Pay, DRM video); the agent cannot see them. Mirroring stops
-  when the phone locks.
-- While the agent runs, the phone's Wi-Fi is the board's hotspot (no internet over it); the model is reached over
-  cellular data.
-- Chinese is typed as pinyin through the board's keyboard (ctrl+space switches English and pinyin). The clipboard is
-  not used for this; emoji are dropped. Landscape apps are not supported yet.
+### Android-specific issues
 
-If something doesn't work (no *ESP32 Agent* in Screen Mirroring, the board not connecting), see [troubleshooting](https://handsy.tech/troubleshooting).
+1. **FLAG_SECURE apps** - Some apps (banking, DRM video) block screen capture
+2. **Text selection** - Not yet implemented (requires Accessibility Service)
+3. **System permissions** - Some settings require ADB or root
 
-## Responsible use
+### Hardware limitations
 
-Only automate devices and accounts you own or are allowed to use, and respect the terms of the apps involved. The
-agent acts with your hands: watch it, and keep the stop button within reach.
+1. **USB OTG required** - Not all phones support USB OTG
+2. **Power consumption** - ESP32 draws power from phone battery
+3. **Physical constraints** - Board must stay plugged in during operation
 
-## Contributing
+---
 
-Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Security reports: [SECURITY.md](SECURITY.md).
+## Troubleshooting
 
-## Contact
+### Common issues
 
-Questions or feedback: [support@handsy.tech](mailto:support@handsy.tech) · Website: [handsy.tech](https://handsy.tech)
+**App crashes on launch**
+- Enable USB debugging and grant storage permissions
+- Check logcat: `adb logcat -s ESP32Agent`
 
-## Related projects
+**Board not detected**
+- Check USB OTG support: some phones disable it by default
+- Try different USB cable (data-capable, not charge-only)
+- Flash latest firmware
 
-| Project | Approach | Difference from this project |
-|---|---|---|
-| [VersaiOS](https://github.com/zhaodashuaibi/VersaiOS) | UxPlay mirroring + ESP32-S3 Bluetooth mouse + vision model | Needs a computer; one tap per instruction |
-| [ja1chen/actell](https://github.com/ja1chen/actell) | Agent app on the iPhone via Apple's CoreDevice debug channel | Needs Developer Mode and a Developer Disk Image |
-| [AidenAI-IO/aiden-firmware](https://github.com/AidenAI-IO/aiden-firmware) | HDMI capture + USB keyboard/mouse + multimodal model | Capture hardware; mainly Android |
-| [yoyicue/glassbox](https://github.com/yoyicue/glassbox) | PicoKVM HDMI capture + USB HID | macOS controller and PicoKVM |
-| [boboabw/phone-agent](https://github.com/boboabw/phone-agent) | ESP32-S3 Bluetooth HID + AssistiveTouch, agent as an iPhone app | Closest to this version; this one also brings the eyes (AirPlay on the board) |
-| [VKCOM/devicehub](https://github.com/VKCOM/devicehub) | ESP32 Bluetooth mouse for iOS device farms | Device-farm tooling, no AI agent |
+**Tasks fail immediately**
+- Check LLM API key and endpoint
+- Verify network connectivity (WiFi credentials via BLE)
+- Review trace files: `adb shell run-as com.example.esp32agent.android ls files/traces`
 
-WebDriverAgent/XCUITest-based tools such as [mobile-mcp](https://github.com/mobile-next/mobile-mcp) and
-[Midscene](https://github.com/web-infra-dev/midscene) need a Mac and code signing.
+See [docs/android.md#troubleshooting](docs/android.md#troubleshooting) for more.
 
-## Acknowledgements
+---
 
-[UxPlay](https://github.com/FDH2/UxPlay) (the AirPlay receiver the firmware's is ported from) ·
-[NimBLE-Arduino](https://github.com/h2zero/NimBLE-Arduino) ·
-[Arduino ESP32 core](https://github.com/espressif/arduino-esp32) and [TinyUSB](https://github.com/hathach/tinyusb)
+## Development
+
+### Building from source
+
+```bash
+# Clone the repository
+git clone https://github.com/onehumanbeing/esp32-iphone-agent.git
+cd esp32-iphone-agent
+git checkout android-only
+
+# Build Android app
+cd android
+./gradlew assembleDebug
+
+# Install to phone
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+
+# Build and flash firmware
+cd ../hardware/hid_bridge
+pio run -e xiao_esp32s3 -t upload
+```
+
+### Contributing
+
+Contributions are welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test on real hardware
+5. Submit a pull request
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+---
 
 ## License
 
-[MIT](LICENSE), except `hardware/hid_bridge/src/airplay/` (ported from UxPlay), which is
-[GPL-3.0](hardware/hid_bridge/src/airplay/LICENSE-GPL.md); the firmware binary that links it is therefore
-distributed under GPL-3.0. Files under [`skills/`](skills/) are [MIT-0](skills/LICENSE) (MIT No Attribution);
-the rest of the repository keeps the license above.
+MIT License - see [LICENSE](LICENSE) for details.
+
+Based on **[ESP32 iPhone Agent](https://github.com/onehumanbeing/esp32-iphone-agent)** by Henry Yuan.
+
+---
+
+## Credits
+
+- **Original project**: [ESP32 iPhone Agent](https://github.com/onehumanbeing/esp32-iphone-agent) by [Henry Yuan](https://github.com/onehumanbeing)
+- **Android port**: Community contributors
+- **Hardware**: ESP32-S3 by Espressif Systems
+
+---
+
+## Support
+
+- **Issues**: [GitHub Issues](https://github.com/onehumanbeing/esp32-iphone-agent/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/onehumanbeing/esp32-iphone-agent/discussions)
+- **Original project**: [@iamhenryyuan on X](https://x.com/iamhenryyuan)

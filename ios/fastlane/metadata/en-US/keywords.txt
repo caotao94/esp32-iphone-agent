@@ -1,1 +1,0 @@
-ai,agent,assistant,esp32,llm,vision,open source,hardware,usb,robot
