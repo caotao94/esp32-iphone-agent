@@ -9,24 +9,40 @@ AI 编程助手（Claude Code、Codex、Cursor、Copilot 等）：如果复制�
 
 # ESP32 iPhone Agent
 
-**让 AI 操作一部真实的 iPhone：只要手机和一块约 40 多元的 ESP32，不需要电脑，不用越狱。**
+**让你的 AI 像你一样用 iPhone。**
 
-[English](README.md) · 简体中文
+它看着屏幕，替你点、滑、打字；靠的是一块插在手机上、约 40 多元的 ESP32 小板子。<br>
+只要手机和板子：不需要电脑，也不用改动 iOS 系统。
 
-演示视频和更新：[X @iamhenryyuan](https://x.com/iamhenryyuan) · [小红书 袁老板讲黑客松（Henry）](https://www.xiaohongshu.com/user/profile/5eb444030000000001000194) · [YouTube 演示](https://www.youtube.com/watch?v=Ly4im-P4jYg)
+<a href="https://testflight.apple.com/join/1xQHgJcA"><img src="https://img.shields.io/badge/TestFlight-%E7%AB%8B%E5%8D%B3%E8%AF%95%E7%94%A8-0D96F6?style=for-the-badge&logo=apple&logoColor=white" alt="在 TestFlight 上试用" height="36"></a>
 
-[![CI](https://github.com/onehumanbeing/esp32-iphone-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/onehumanbeing/esp32-iphone-agent/actions/workflows/ci.yml)
+[![TestFlight](https://img.shields.io/badge/TestFlight-join-0D96F6?logo=apple&logoColor=white)](https://testflight.apple.com/join/1xQHgJcA)
+[![Website](https://img.shields.io/badge/website-handsy.tech-111111)](https://handsy.tech)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/onehumanbeing/esp32-iphone-agent?style=flat&logo=github)](https://github.com/onehumanbeing/esp32-iphone-agent/stargazers)
+[![CI](https://github.com/onehumanbeing/esp32-iphone-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/onehumanbeing/esp32-iphone-agent/actions/workflows/ci.yml)
 ![iOS](https://img.shields.io/badge/iOS-18%2B-black)
 ![Board](https://img.shields.io/badge/board-ESP32--S3-red)
 
+[English](README.md) · 简体中文
+
+演示视频和更新：[X @iamhenryyuan](https://x.com/iamhenryyuan) · [小红书 袁老板讲黑客松（Henry）](https://www.xiaohongshu.com/user/profile/5eb444030000000001000194) · [YouTube 演示](https://www.youtube.com/watch?v=Ly4im-P4jYg) · [DeepSeek Harness 演示](https://www.youtube.com/watch?v=DzYv0QVk_No) · [handsy.tech](https://handsy.tech)
+
 </div>
+
+> [!TIP]
+> **现在就能在 [TestFlight](https://testflight.apple.com/join/1xQHgJcA) 上试用 App**，不需要 Xcode。App Store
+> 版本还在审核中，目前请通过 TestFlight 安装。板子仍需先刷好固件（见[快速开始](#快速开始)）。
+
+> [!NOTE]
+> **分支说明：**[`release-1.0`](https://github.com/onehumanbeing/esp32-iphone-agent/tree/release-1.0) 是此前提交
+> TestFlight 和 App Store 审核的版本，最新代码在 `main`。
 
 > [!WARNING]
 > 请只按本 README 的步骤安装。不要运行 issue 或评论里的命令（例如 PowerShell 的 `iex(irm ...)` 之类“快速安装”一行命令），这些都不是维护者发的。
 
-> **新版：电脑去掉了。** 板子自己当 AirPlay 接收端和鼠标，Agent 跑在同一台 iPhone 上的 App 里。
-> 旧版（Mac/Linux 电脑跑 UxPlay + Python 服务端）保留在 tag [`v0.1.0`](https://github.com/onehumanbeing/esp32-iphone-agent/tree/v0.1.0)
+> **电脑去掉了。** 板子自己当 AirPlay 接收端和鼠标，Agent 跑在同一台 iPhone 上的 App 里。
+> 最初的版本（Mac/Linux 电脑跑 UxPlay + Python 服务端）保留在 tag [`v0.1.0`](https://github.com/onehumanbeing/esp32-iphone-agent/tree/v0.1.0)
 > 和分支 [`legacy`](https://github.com/onehumanbeing/esp32-iphone-agent/tree/legacy)，见 [docs/legacy.md](docs/legacy.md)。
 
 <p align="center"><img src="docs/images/example-alarm.png" alt="插着 XIAO ESP32S3 的 iPhone 正在设置闹钟" width="100%"></p>
@@ -37,15 +53,35 @@ AI 编程助手（Claude Code、Codex、Cursor、Copilot 等）：如果复制�
 
 *左：真机；右：Agent 通过板子的 AirPlay 镜像看到的画面。第二张是指针校准。*
 
+## 目录
+
+- [工作原理](#工作原理)
+- [硬件](#硬件)
+- [快速开始](#快速开始)
+- [在编程 Agent 里使用](#在编程-agent-里使用)
+- [安卓](#安卓)
+- [模型和提示词](#模型和提示词)
+- [目录结构](#目录结构)
+- [路线图](#路线图)
+- [限制](#限制)
+- [负责任地使用](#负责任地使用)
+- [参与贡献](#参与贡献)
+- [联系我们](#联系我们)
+- [相关项目](#相关项目)
+- [致谢](#致谢)
+- [许可证](#许可证)
+
 ## 工作原理
 
+更多细节见 [Handsy 工作原理](https://handsy.tech/zh/how-it-works)。
+
 ```
-iPhone ──屏幕镜像（Wi-Fi）──▶ ESP32-S3：AirPlay 接收端 ──蓝牙──▶ ESP32 Agent App（同一台 iPhone）
-   ▲                           自带热点，H.264 原样转发              解码 → 视觉模型 → 动作
-   └──────── USB HID 鼠标 + 键盘 ◀──────────── 蓝牙命令 ◀──────────────────┘
+iPhone ──屏幕镜像（Wi-Fi）──▶ ESP32-S3：AirPlay 接收端 ──Wi-Fi TCP :7201──▶ ESP32 Agent App（同一台 iPhone）
+   ▲                           自带热点，H.264 原样转发                    解码 → 视觉模型 → 动作
+   └──────── USB HID 鼠标 + 键盘 ◀──────────── 蓝牙命令 ◀────────────────────┘
 ```
 
-- **眼睛：AirPlay 投到板子上。** 板子开自己的 Wi-Fi 热点，在手机的「屏幕镜像」里显示为 *ESP32 Agent*。它不解码，只把 H.264 码流经蓝牙转给 App。手机连着板子热点时，调用模型走蜂窝数据。
+- **眼睛：AirPlay 投到板子上。** 板子开自己的 Wi-Fi 热点，在手机的「屏幕镜像」里显示为 *ESP32 Agent*。它不解码，只把 H.264 码流经 Wi-Fi（TCP，端口 7201）转给 App。蓝牙传命令和状态。手机连着板子热点时，调用模型走蜂窝数据。
 - **手：USB HID。** 板子是标准 USB 鼠标和键盘。打开辅助触控（AssistiveTouch）后，鼠标控制屏幕上的指针，点击就是轻点，拖动就是滑动。
 - **大脑：App。** App 解码画面，把截图发给任意兼容 OpenAI 接口的视觉模型，由规划器和执行器决定动作：点、滑、画、输入、按键、回主屏、结束。工作时 App 在后台运行，灵动岛显示它在做什么。
 - **闭环。** 指针是相对移动的，App 记录位置并定期回角落归零；精细点击前晃一下指针、在画面里找到它并修正偏差。每个动作后等画面稳定，再告诉模型画面有没有变化。板子、热点或镜像断开时暂停，恢复后从同一步继续。
@@ -53,12 +89,17 @@ iPhone ──屏幕镜像（Wi-Fi）──▶ ESP32-S3：AirPlay 接收端 ─�
 
 ## 硬件
 
+支持的板子和硬件细节见[硬件指南](https://handsy.tech/zh/docs/hardware)。
+
 | 部件 | 说明 |
 |---|---|
-| **ESP32-S3 板子** | 测试用的是 [Seeed Studio XIAO ESP32S3](https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/)（普通版，8 MB PSRAM；不是 Sense，也不是 Plus），淘宝搜 "XIAO ESP32S3"，约 40-50 元。USB-C 口接 S3 原生 USB、带 PSRAM 的 ESP32-S3 板子都应该可以。 |
+| **ESP32-S3 板子** | 测试用的是 [Seeed Studio XIAO ESP32S3](https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/)（普通版，8 MB PSRAM；不是 Sense，也不是 Plus），淘宝搜 "XIAO ESP32S3"，约 40-50 元；海外可在 [Amazon](https://amzn.to/3U6QKiz)\* 购买。USB-C 口接 S3 原生 USB、带 PSRAM 的 ESP32-S3 板子都应该可以。 |
+| **USB-C 线** | 短的 USB-C 对 USB-C 线，例如 [Anker 60W，1 英尺，2 条装](https://amzn.to/4yvNyvi)\*。 |
 | **iPhone** | iOS 18 及以上，需要蜂窝数据（Wi-Fi 被板子热点占用）。USB-C 机型直接插；Lightning 机型需要 Lightning 转 USB 相机转换器。板子由手机供电。 |
 | **视觉模型** | 任何支持图片输入、兼容 OpenAI 接口的模型：云端 API 或自己部署。 |
-| **装了 Xcode 的 Mac** | 只在刷板子、编译 App 时用一次，运行时不需要。 |
+| **装了 Xcode 的 Mac** | 只在刷板子、编译 App 时用一次，运行时不需要。用 [TestFlight](https://testflight.apple.com/join/1xQHgJcA) 安装 App 的话，App 这部分不需要 Xcode。 |
+
+\* 推广链接。作为亚马逊联盟成员，我会从符合条件的购买中获得佣金。
 
 ## 快速开始
 
@@ -73,7 +114,13 @@ hardware/flash.sh            # 可选参数：[串口] [--debug]
 
 一定要用 `flash.sh` 编译：它会带上 `hardware/hid_bridge/nimble_cfg.h` 里的蓝牙缓冲区配置。
 
+没有 Mac 或不想装工具链？也可以用 Chrome 或 Edge 通过 USB [在网页上刷固件](https://handsy.tech/zh/install)。
+
 ### 2. 安装 App
+
+**最简单：在 iPhone 上[加入 TestFlight 测试](https://testflight.apple.com/join/1xQHgJcA)**，从那里安装 **ESP32 Agent**，然后直接看第 3 步。
+
+**或者自己编译：**
 
 ```bash
 cp ios/Config/Local.xcconfig.example ios/Config/Local.xcconfig   # 填 DEVELOPMENT_TEAM 和 IA_BUNDLE_ID
@@ -89,7 +136,7 @@ open ios/IPhoneAgent.xcodeproj                                    # 在 iPhone �
 1. **Plug Me In**：蓝牙配对板子。
 2. **Let Me See the Screen**：加入板子的 Wi-Fi，然后 控制中心 → 屏幕镜像 → *ESP32 Agent*。
 3. **Let Me Use the Pointer**：打开辅助触控，App 自动校准指针。
-4. **Give Me a Brain**：填模型地址和密钥（存在钥匙串里）。
+4. **Give Me a Brain**：填模型地址和密钥（存在钥匙串里），再从接口的模型列表里选一个视觉模型（或自己填模型 ID）。
 
 ### 4. 给它一个任务
 
@@ -104,6 +151,33 @@ open ios/IPhoneAgent.xcodeproj                                    # 在 iPhone �
 /plugin install esp32agent@handsy
 ```
 
+或者只添加 MCP 服务器：
+
+```bash
+claude mcp add esp32agent -- npx -y esp32agent mcp
+```
+
+Cursor、Cline 等 MCP 客户端：
+
+```json
+{
+  "mcpServers": {
+    "esp32agent": {
+      "command": "npx",
+      "args": ["-y", "esp32agent", "mcp"]
+    }
+  }
+}
+```
+
+DeepSeek Harness（dsh）：安装 [integrations/dsh](integrations/dsh/README.md) 里的插件，同样包含这个 MCP 服务器和技能（[演示视频](https://www.youtube.com/watch?v=DzYv0QVk_No)）：
+
+```bash
+dsh plugin --profile web add dsh-esp32agent
+```
+
+命令行工具在电脑上通过蓝牙直接连板子，板子和电脑连同一个 Wi-Fi 后改走 Wi-Fi（`esp32agent net join`），不需要 iPhone App，也不需要 TestFlight。命令和参数见[命令行文档](https://handsy.tech/zh/docs/cli)和 [cli/README.md](cli/README.md)。
+
 ## 安卓
 
 安卓移植版在 [`android/`](android/)：同一块板子、同一套蓝牙协议、同一个 Agent。变化在“眼睛”——App 用
@@ -112,10 +186,14 @@ USB 指针，因此不需要 AssistiveTouch、不会漂移、也不需要校准�
 Gradle 构建 App；硬件验证清单、与 Swift 版的逐文件对应关系，以及尚未完成的部分，见
 [docs/android.md](docs/android.md)。
 
+`esp32agent` 命令行工具和 MCP 服务暂不支持安卓固件：它没有 Wi-Fi 和镜像视频（命令行会话以 `stream on`
+开始，安卓固件会拒绝），而且它的触摸屏接收绝对坐标的点击和滑动，不是命令行工具驱动的相对指针。
+
 ## 模型和提示词
 
-- 任何兼容 OpenAI 接口的视觉模型都能用（vLLM、SGLang、llama.cpp、Ollama、云端 API）。App 会列出接口上的模型并自动选择，也可以手动指定，规划器和执行器可以用不同模型。
+- 任何兼容 OpenAI 接口的视觉模型都能用（vLLM、SGLang、llama.cpp、Ollama、云端 API）。App 会列出接口上的模型，由你明确选一个；也可以自己填模型 ID，规划器和执行器可以用不同模型。
 - 提示词是 [`prompts/`](prompts/) 里的纯文本，打包进 App：改完重新编译即可。
+- 每次运行结束会记录规划器/执行器调用次数、带截图的请求数，以及接口返回的 token 用量。接口没给 `usage` 时字段保持空缺（不会当成 0）；只要有一次缺用量，本次合计就标成 **partial**。短任务一般是几次规划 + 每步一次执行（每步带一张新截图），成本主要在图片 token；规划器用便宜模型、执行器保留更强模型通常最划算。
 - 开发时用的是 [nvidia/Qwen3.8-Flash-Next-NVFP4](https://huggingface.co/nvidia/Qwen3.8-Flash-Next-NVFP4)，部署在两台 DGX Spark 上（[TensorFold](https://github.com/MiaAI-Lab/Qwen3.8-Flash-Dual-DGX-Sparks-TensorFold)）。
 
 ## 目录结构
@@ -127,28 +205,37 @@ prompts/    App 用的规划器 / 执行器提示词
 hardware/   ESP32-S3 固件（Arduino）：蓝牙 GATT、热点、AirPlay 接收端、USB HID；刷写脚本、
             主机测试、Mac 蓝牙调试工具（hardware/tools）
 docs/       蓝牙协议、安卓移植、旧版说明
-server/     旧版 v0.1.0 的电脑端服务，新版不使用（见 server/README.md）
+harness/    无线开发闭环：Mac → iPhone App（Wi-Fi 安装）→ 板子（固件经 App 更新）
+server/     旧版 v0.1.0 的电脑端服务，当前版本不使用（见 server/README.md）
 ```
 
 不用手机 App 调试：`hardware/tools/board_test.py` 在 Mac 上通过蓝牙扮演 App（[hardware/tools/README.md](hardware/tools/README.md)）。板子与 App 的协议：[docs/ble-protocol.md](docs/ble-protocol.md)。
+
+### Harness 开发流程
+
+板子插在测试 iPhone 上、iPhone 连着 Mac 的 Wi-Fi 时，一切都走 `devicectl`，不用线：`harness/app.sh` 编译并安装
+Debug 版 App，`harness/fw.sh` 编译固件并拷进 App，由 App 装到板子上（新镜像起不来会自动回滚），
+`harness/run.sh "<任务>"` 跑任务，`harness/logs.sh` 拉取日志。Mac 只在一次性 `net sta` 时用蓝牙连板子。
+设置（Lightning iPhone 需相机转接器）和安全说明见 [harness/README.md](harness/README.md)。
 
 ## 路线图
 
 - [x] 去掉电脑：板子负责镜像和点击，手机上的 App 负责思考
 - [ ] 安卓：把 `android/` 里的移植版在真机上跑通并补完（[docs/android.md](docs/android.md)）
 - [ ] 横屏 App（坐标和校准目前按竖屏）
-- [ ] 非 ASCII 输入（比如用 iOS 拼音键盘输入中文）
+- [x] 中文输入（通过板子的键盘按拼音输入；ctrl+space 切换英文和拼音）
 - [ ] 更快：一次模型调用多个动作，只在需要时校正指针
 - [ ] 在 iOS App 内整理一份效果最好的模型推荐列表（[@asharthinks 的建议](https://x.com/asharthinks/status/2110740775030125019)）
 
 ## 限制
 
 - **AirPlay 源必须是 iPhone。** 不支持从 macOS 屏幕镜像：握手看起来正常，但板子收不到视频。
-- 蓝牙约 300-500 kbps，所以镜像画面很小（480×1040，≤5 fps）；每一步要几秒，主要花在模型上。
+- 镜像画面为 480×1040、最高 5 fps；每一步要几秒，主要花在模型上。
 - iOS 不镜像部分界面（输入密码、Apple Pay、DRM 视频），Agent 看不到。手机锁屏后镜像会停止。
 - Agent 运行时，手机的 Wi-Fi 是板子的热点（没有外网），模型走蜂窝数据。
-- App 用 iOS 私有 API（`suspend`）退出自己；自己编译的版本没问题，上架前会替换。
-- 键盘输入只支持 ASCII。暂不支持横屏 App。
+- 中文通过板子的键盘按拼音输入（ctrl+space 在英文和拼音之间切换），不用剪贴板；emoji 会被丢掉。暂不支持横屏 App。
+
+遇到问题（「屏幕镜像」里找不到 *ESP32 Agent*、板子连不上），见[故障排查](https://handsy.tech/zh/troubleshooting)。
 
 ## 负责任地使用
 
@@ -158,6 +245,10 @@ server/     旧版 v0.1.0 的电脑端服务，新版不使用（见 server/READ
 
 欢迎提 Issue 和 PR，见 [CONTRIBUTING.md](CONTRIBUTING.md)。安全问题：[SECURITY.md](SECURITY.md)。
 
+## 联系我们
+
+问题或反馈：[support@handsy.tech](mailto:support@handsy.tech) · 官网：[handsy.tech](https://handsy.tech)
+
 ## 相关项目
 
 | 项目 | 方式 | 与本项目的区别 |
@@ -166,7 +257,7 @@ server/     旧版 v0.1.0 的电脑端服务，新版不使用（见 server/READ
 | [ja1chen/actell](https://github.com/ja1chen/actell) | iPhone 上的 Agent App，走 Apple CoreDevice 调试通道 | 需要开发者模式和开发者磁盘映像 |
 | [AidenAI-IO/aiden-firmware](https://github.com/AidenAI-IO/aiden-firmware) | HDMI 采集 + USB 键鼠 + 多模态模型 | 需要采集硬件；主要面向 Android |
 | [yoyicue/glassbox](https://github.com/yoyicue/glassbox) | PicoKVM HDMI 采集 + USB HID | 需要 macOS 控制端和 PicoKVM |
-| [boboabw/phone-agent](https://github.com/boboabw/phone-agent) | ESP32-S3 蓝牙 HID + 辅助触控，Agent 是 iPhone App | 最接近新版；本项目还把"眼睛"也放进了板子（AirPlay） |
+| [boboabw/phone-agent](https://github.com/boboabw/phone-agent) | ESP32-S3 蓝牙 HID + 辅助触控，Agent 是 iPhone App | 最接近当前版本；本项目还把"眼睛"也放进了板子（AirPlay） |
 | [VKCOM/devicehub](https://github.com/VKCOM/devicehub) | ESP32 蓝牙鼠标，用于 iOS 设备农场 | 设备农场工具，没有 AI Agent |
 
 基于 WebDriverAgent/XCUITest 的工具，如 [mobile-mcp](https://github.com/mobile-next/mobile-mcp) 和 [Midscene](https://github.com/web-infra-dev/midscene)，需要 Mac 和代码签名。
