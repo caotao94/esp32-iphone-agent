@@ -23,8 +23,6 @@ video stream and replies: see [cli-protocol.md](cli-protocol.md).
 `<id>` is a decimal request id chosen by the app; the reply echoes it.
 Existing HID commands, unchanged semantics from the old TCP protocol:
 `ping`, `home`, `move DX DY`, `press`, `release`, `click`, `scroll A B`, `type TEXT`, `key COMBO`.
-System keys, in every build: `homescreen` (consumer AC Home) and `back` (consumer AC Back; on Android that
-is KEYCODE_BACK, on iOS the app swipes from the screen edge instead).
 New:
 - `stream on|off` — continuously forward every access unit over `video` (default off).
 - `snap` — send SPS/PPS + every AU since the last IDR (the current GOP), then reply `ok`.
@@ -35,32 +33,6 @@ New:
 - `coex [bt|balance|wifi]` — Wi-Fi/BLE radio-share preference (A/B knob, not stored; every boot starts at
   `balance`). Replies `ok <current>`; bare `coex` just reports it.
 When the link drops, the board releases all buttons/keys (same as before).
-
-### Android builds
-
-`hardware/flash.sh --android` (`-DIA_TARGET_ANDROID=1`, see [android.md](android.md)) sends **single-touch
-USB digitizer reports** with a Finger contact identifier/count and absolute coordinates, and has no Wi-Fi at all (no AirPlay receiver, hotspot, Wi-Fi video, OTA or CLI Wi-Fi link). The app captures
-the screen itself and the phone keeps its own Wi-Fi. Earlier Android firmware used an absolute mouse
-descriptor, which some Android input readers do not classify as a usable pointer or touch device.
-
-- `abs X Y` — set the touch position to X, Y in **0-32767**. It moves a held contact, but shows no cursor.
-- `tap X Y [HOLD_MS]` — move, press, hold (default 60 ms), release.
-- `swipe X1 Y1 X2 Y2 [MS] [HOLD_MS]` — drag from p1 to p2, one report every 8 ms over `MS` (default 250),
-  then rest `HOLD_MS` (default 120) before releasing, so the swipe has no momentum.
-- Drawing strokes reuse `press` / `abs` … / `release`.
-- `scroll` is unsupported on the touchscreen; use `swipe`.
-- `hidinfo` returns the target, input descriptor (`touchscreen`), USB state, report counters and build time.
-- USB report transmission failures return `err` instead of unconditional `ok`; `ok` still does not prove
-  that a particular app reacted to the input.
-- `home` answers `ok` without moving (an absolute pointer does not drift); `move` answers `err`.
-- `stream`, `snap`, `bench`, `vdbg`, `res`, `fps`, `coex` and `txpower` answer `err unsupported in the android build`.
-- A CLI `net` write (`net {"mode":...}`) answers `err no Wi-Fi in the android build`; `net` alone reports mode
-  `none`. The Wi-Fi video channel, the OTA listener and the CLI's Wi-Fi link (TCP 7202) are never started, so
-  firmware updates go over USB.
-- `status` keeps every key: `net` is `"none"`, `ap` is `"idle"`, and the video numbers are zero.
-
-The iPhone build answers `err needs the android build` to `abs`, `tap` and `swipe`, so an app can probe
-which pointer it has: try `abs`, fall back to `home` + `move` when it errors.
 
 ## status (JSON, one notify per second, must fit one MTU; keep short keys)
 ```json
@@ -121,15 +93,28 @@ above; a zero-length record answers hello and ka.
 - When the GOP fills, the board keeps a tail of later units for everyone; units the stream sent are dropped
   from it only once more than 64 are behind (kept for a resume: a dropped session loses what TCP buffered).
 
+## Wi-Fi audio (TCP)
+AirPlay audio rides the same TCP link, only after the app sends the line `audio` (on each new session, after the
+hello ack; older firmware ignores it). Records are chunks with flag `0x80` set (never set on video) and their own
+u16 seq: `[seq u16 LE][flags][payload]`, payload `[u32 LE board ms][u32 LE RTP ts][AAC-ELD frame]`.
+- The board decrypts the mirroring audio (SETUP type 96, `ct=8` AAC-ELD, 44.1 kHz stereo, 480 samples per frame,
+  AudioSpecificConfig `F8 E8 50 00`): AES-128-CBC with the session key and the SETUP `eiv`, afresh per packet,
+  whole blocks only. Other formats are only counted.
+- Only sound goes out: the sender's no-data packets (empty, or the marker `00 68 34 00`) start nothing. A segment
+  starts with the first sounding frame (`START`, 0x01) and ends 500 ms after the last one with an empty `END`
+  (0x02) record. An app that joins mid-segment gets `START` on its first frame.
+- Status `aud`: `pk` packets received, `seg` segments, `snd` 1 while one goes on, `vol` the sender's volume in dB
+  (-144 muted, from SET_PARAMETER), `drop` records lost (queue full or no app).
+- The app (Settings › Listen to phone audio, off by default) decodes them, ignores quiet segments (under -50 dBFS)
+  and transcribes on the phone; the agent's step prompt then has a `Heard` block.
+
 ## net (JSON)
 Read: `{"mode":"ap","ssid":"ESP32Agent-1A2B","pass":"<random 12 chars>","ip":"192.168.4.1","vtok":"<32 hex>"}`
 (SoftAP credentials are generated once at first boot and kept in NVS; `vtok` is new every boot).
 Write `{"mode":"ap"}` or `{"mode":"sta","ssid":"...","pass":"..."}` — stored in NVS, board restarts Wi-Fi.
 
 ## AirPlay
-Receiver name `ESP32 Agent`, mirroring only (no audio), H.264 only, resolution/fps from NVS.
-Not present in an Android build: there is no receiver, nothing advertises `_airplay._tcp`, and the board
-opens no hotspot.
+Receiver name `ESP32 Agent`, mirroring only, H.264 video plus AAC-ELD audio while there is sound (see Wi-Fi audio), resolution/fps from NVS.
 
 ## Deviations (firmware notes)
 - `status`: if the negotiated MTU is too small for the full JSON (MTU-3 < ~255 bytes), the notify carries a

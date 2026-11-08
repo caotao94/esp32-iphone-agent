@@ -42,6 +42,7 @@ struct ChatResult {
     var responseSeconds: Double?  // time to HTTP headers, including server queue time
     var retried = false             // the first reply was empty
     var servedModel: String?        // the model that answered (e.g. the one openrouter/free picked)
+    var tree: Data?                 // free line, X-Handsy-Tree: slim: the tree Spark built for the sent frame (JSON)
 
     /// For the trace and the debug log: why a reply came back empty or cut.
     var diagnostics: JObject {
@@ -83,6 +84,8 @@ struct LLMError: LocalizedError {
     private let headers: (() throws -> [String: String])?  // extra per-request headers (e.g. the free line's lease)
     private(set) var tokenParam: String
     private var auto: Bool
+    // some reasoning models allow only their default temperature; drop it for good once the server says so
+    private var sendsTemperature = true
     private let session: URLSession
     private var retryAfter: Double?  // seconds, from the last response's Retry-After header
 
@@ -141,7 +144,8 @@ struct LLMError: LocalizedError {
             ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64," + $0.base64EncodedString()]]
         }
         content.append(["type": "text", "text": text])
-        var body: [String: Any] = ["model": model, "temperature": temperature]
+        var body: [String: Any] = ["model": model]
+        if sendsTemperature { body["temperature"] = temperature }
         extra.forEach { body[$0.key] = $0.value }
         body["messages"] = [["role": "system", "content": system], ["role": "user", "content": content]]
         body["stream"] = true
@@ -152,8 +156,15 @@ struct LLMError: LocalizedError {
         var status = 0, result: ChatResult?, errorText = ""
         do {
             (status, result, errorText) = try await post(body, maxTokens: maxTokens, started: started)
-            if status == 400 && auto && errorText.contains("max_completion_tokens") {
-                (tokenParam, auto) = ("max_completion_tokens", false)
+            // A 400 names one refused parameter at a time: a model may refuse both, in either order.
+            for _ in 0..<2 where status == 400 {
+                if auto && errorText.contains("max_completion_tokens") {
+                    (tokenParam, auto) = ("max_completion_tokens", false)
+                } else if sendsTemperature && errorText.contains("temperature") {
+                    sendsTemperature = false
+                    body["temperature"] = nil
+                    DebugLog.write("llm: \(model) rejects an explicit temperature; retrying without it")
+                } else { break }
                 (status, result, errorText) = try await post(body, maxTokens: maxTokens, started: started)
             }
             // A busy upstream: once more. A per-minute rate limit: wait as told (Retry-After, at most 20 s), up
@@ -174,7 +185,7 @@ struct LLMError: LocalizedError {
             DebugLog.write(String(format: "llm ✗ HTTP %d after %.1f s: %@", status, now() - started, String(errorText.prefix(200))))
             if status == 429 { throw Self.rateLimitError(errorText, openRouter: baseURL.host?.hasSuffix("openrouter.ai") == true) }
             if status == 503 && Trial.isTrial(baseURL.absoluteString) {  // the free line took the run back or is full
-                throw LLMError(message: String(localized: "The free line is busy or ended this run. Tap Retry in a moment."), status: status)
+                throw LLMError(message: String(localized: "Handsy Free is busy or ended this run. Tap Retry in a moment."), status: status)
             }
             throw LLMError(message: "LLM HTTP \(status): \(errorText.prefix(300))", status: status)
         }
@@ -303,6 +314,7 @@ struct LLMError: LocalizedError {
             if payload == "[DONE]" { break }
             guard let json = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: Any] else { continue }
             try Self.checkError(json)
+            if let tree = Self.tree(json) { result.tree = tree; continue }
             let choice = (json["choices"] as? [[String: Any]])?.first
             let delta = choice?["delta"] as? [String: Any]
             Self.note(json, choice, into: &result)
@@ -329,10 +341,17 @@ struct LLMError: LocalizedError {
             throw LLMError(message: "bad LLM reply: \(String(decoding: raw.prefix(200), as: UTF8.self))")
         }
         var result = ChatResult(text: msg["content"] as? String ?? "", firstToken: nil, total: 0)
+        result.tree = tree(json)
         note(json, choice, into: &result)
         result.reasoningChars = reasoning(msg).count
         result.rawChars = result.text.count
         return result
+    }
+
+    /// The free line's `{"handsy": {"tree": …}}` (sent before [DONE], or inside a non-streamed result).
+    static func tree(_ json: [String: Any]) -> Data? {
+        guard let tree = (json["handsy"] as? [String: Any])?["tree"] as? [String: Any] else { return nil }
+        return try? JSONSerialization.data(withJSONObject: tree)
     }
 
     /// Providers can report errors inside an HTTP 200 stream or JSON response.

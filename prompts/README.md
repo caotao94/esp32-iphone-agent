@@ -5,10 +5,11 @@ English · [简体中文](README.zh-CN.md)
 The model prompts the app sends, as plain text. They are bundled into the app at build time
 (`ios/project.yml`, read by `ios/IPhoneAgent/Agent/Prompts.swift`).
 
-- `planner.md`: writes a short plan from the goal and the first screen.
-- `actor.md`: picks the next action(s) from each screenshot; lists the action syntax the app parses.
+- `actor.md`: the one model of a run. Each step it gets the goal, its own plan, the recent actions with what each
+  did, and the screen; it replies THINK, an optional PLAN (rewrites the plan), and DO action(s), and says done when
+  the whole goal is visible. Lists the action syntax the app parses.
 - `app-rules.md`: rules for running inside the phone (never touch this app, toggles, home screen icons); appended
-  to both.
+  to the actor prompt.
 
 The Android app keeps its own variants in `android/app/src/main/assets/prompts/`: the same three files with
 Android wording (the app drawer instead of the iOS search pill, the Home and Back keys instead of edge swipes,

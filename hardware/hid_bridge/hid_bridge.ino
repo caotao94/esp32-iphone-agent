@@ -3,18 +3,13 @@
 // iOS app on the same phone. It holds no logic; the app decides. Protocol: docs/ble-protocol.md.
 //
 // HID commands (unchanged from the old TCP protocol, the board answers "ok" or "err <why>"):
-//   ping | home | move <dx> <dy> | press | release | click
+//   ping | pace | home | move <dx> <dy> [speed] | press | release | click
 //   scroll <v> <h> | type <ascii text> | key <combo, e.g. cmd+h, enter>
 //   homescreen (the consumer-control Home key, "AC Home": iOS goes to the Home Screen, like a keyboard's home key)
-//
-// Android builds (hardware/flash.sh --android; see target.h and docs/android.md) send single-touch
-// digitizer reports rather than absolute mouse reports, and add:
-//   back (the consumer-control Back key, "AC Back": Android goes back, like the navigation bar's back)
-//   abs X Y | tap X Y [HOLD_MS] | swipe X1 Y1 X2 Y2 [MS] [HOLD_MS], with X and Y in 0-32767 of the screen
-// Those answer "err ..." in the default (iPhone) build; `move` and `home` answer "err ..." in an Android one.
 
 #include <esp_task_wdt.h>
 #include <esp_mac.h>
+#include <esp_wifi.h>
 #include <esp_core_dump.h>
 #include "USB.h"
 #include "USBHIDMouse.h"
@@ -29,89 +24,37 @@
 #include "wifi_video.h"
 #include "ota.h"
 #include "version.h"
-#include "target.h"
-#if IA_TARGET_ANDROID
-#include "android_touch.h"
-#endif
-#if !IA_TARGET_ANDROID
-#include <esp_wifi.h>  // txpower; the Android build makes no Wi-Fi driver calls at all
 #include "src/airplay/airplay.h"
-#endif
 #include "src/hid/arbiter.h"
+#include "src/hid/pace.h"
+#include "src/heard/heard.h"
+#include "src/cli/cli_proto.h"
 #include "logbuf.h"
 
-const int STEP = 10;      // max pointer delta per report while moving
+const int STEP = 10;      // pointer speed per report while moving (any direction, see pace.h)
 const int STEP_MS = 8;    // report interval; constant pace keeps iOS acceleration predictable
-const int HOME_REPORTS = 50;
+const int HOME_REPORTS = 25;  // per axis
 #ifndef DEBUG_SERIAL
 #define DEBUG_SERIAL 0  // 1: echo commands and the AirPlay handshake over USB serial
 #endif
 
 const int WATCHDOG_MS = 8000;  // a hung loop (e.g. blocked USB) reboots the board instead of staying offline
 
-// Android uses a single-touch USB digitizer; iPhone uses a relative USB mouse. The BLE coordinates
-// remain absolute in the Android build, so existing apps can use the updated firmware unchanged.
-#if IA_TARGET_ANDROID
-AndroidTouch mouse;
-#else
 USBHIDMouse mouse;
-#endif
 USBHIDKeyboard keyboard;
 USBHIDConsumerControl consumer;
 const uint16_t AC_HOME = 0x0223;  // HID consumer page: AC Home
-const uint16_t AC_BACK = 0x0224;  // HID consumer page: AC Back (Android maps it to KEYCODE_BACK)
 static String receiverName = "ESP32 Agent";
 
-#if !IA_TARGET_ANDROID
-void movePaced(long dx, long dy) {
-  while (dx || dy) {
-    int sx = constrain(dx, -STEP, STEP), sy = constrain(dy, -STEP, STEP);
+void movePaced(long dx, long dy, int step = STEP) {
+  pace_t p;
+  pace_start(&p, dx, dy, step);
+  int sx, sy;
+  while (pace_next(&p, &sx, &sy)) {
     mouse.move(sx, sy);
-    dx -= sx;
-    dy -= sy;
     delay(STEP_MS);
   }
 }
-#else
-// Absolute touch (Android): X and Y are 0-32767 of the screen. A tap sends tip down/up, and a swipe
-// holds tip down while changing X/Y. Updating X/Y without tip down does not show a mouse cursor.
-const int ABS_MAX = 32767;
-const int ABS_STEP_MS = 8;   // report interval while dragging
-const int SETTLE_MS = 8;     // let the pointer arrive before the button goes down
-static int16_t absX, absY;   // where the pointer is, so a scroll report does not also move it
-
-void absMove(long x, long y) {
-  absX = (int16_t)constrain(x, 0L, (long)ABS_MAX);
-  absY = (int16_t)constrain(y, 0L, (long)ABS_MAX);
-  mouse.move(absX, absY);
-}
-
-String absTap(long x, long y, long holdMs) {
-  absMove(x, y);
-  delay(SETTLE_MS);
-  mouse.press(MOUSE_LEFT);
-  delay(constrain(holdMs, 20L, 1000L));
-  mouse.release(MOUSE_LEFT);
-  delay(30);  // a tap is finished, not the start of a drag
-  return "ok";
-}
-
-String absSwipe(long x1, long y1, long x2, long y2, long ms, long holdMs) {
-  absMove(x1, y1);
-  delay(SETTLE_MS);
-  mouse.press(MOUSE_LEFT);
-  delay(12);
-  int steps = constrain((int)(ms / ABS_STEP_MS), 1, 400);
-  for (int i = 1; i <= steps; i++) {
-    absMove(x1 + (x2 - x1) * i / steps, y1 + (y2 - y1) * i / steps);
-    delay(ABS_STEP_MS);
-  }
-  delay(constrain(holdMs, 0L, 1000L));  // rest before lifting, so the swipe has no momentum
-  mouse.release(MOUSE_LEFT);
-  delay(30);
-  return "ok";
-}
-#endif
 
 uint8_t keyCode(const String &k) {
   if (k == "enter") return KEY_RETURN;
@@ -152,65 +95,31 @@ bool usbReady() {
   return tud_mounted() && !tud_suspended();
 }
 
-String runHid(const String &line) {
+String run(const String &line) {
   int sp = line.indexOf(' ');
   String cmd = sp < 0 ? line : line.substring(0, sp);
   String arg = sp < 0 ? "" : line.substring(sp + 1);
-  long a = 0, b = 0, c = 0, d = 0, e = 0, f = 0;
-  sscanf(arg.c_str(), "%ld %ld %ld %ld %ld %ld", &a, &b, &c, &d, &e, &f);
+  long a = 0, b = 0, c = STEP;
+  sscanf(arg.c_str(), "%ld %ld %ld", &a, &b, &c);
 
   if (cmd == "ping") return "ok";
+  if (cmd == "pace") return "ok " + String(PACE_VERSION);  // how moves are paced: the app recalibrates on a change
   if (!usbReady()) return "err phone usb asleep (unlock the phone)";
-#if IA_TARGET_ANDROID
-  if (cmd == "home") return "ok";  // an absolute pointer never drifts: nothing to re-home
-  if (cmd == "move") return "err relative move needs the iphone build; use abs X Y";
-  if (cmd == "abs") { absMove(a, b); return "ok"; }
-  if (cmd == "tap") return absTap(a, b, c ? c : 60);
-  if (cmd == "swipe") {
-    int fields = sscanf(arg.c_str(), "%ld %ld %ld %ld %ld %ld", &a, &b, &c, &d, &e, &f);
-    return absSwipe(a, b, c, d, fields >= 5 ? e : 250, fields >= 6 ? f : 120);
-  }
-#else
-  if (cmd == "home") {  // slam the pointer into the top-left corner
-    for (int i = 0; i < HOME_REPORTS; i++) { mouse.move(-127, -127); delay(2); }
+  if (cmd == "home") {  // slam the pointer into the top-left corner: left first, then up along the left edge,
+    // so it never rides the top edge from the right (that opened Control Center, 2026-11-06)
+    for (int i = 0; i < HOME_REPORTS; i++) { mouse.move(-127, 0); delay(2); }
+    for (int i = 0; i < HOME_REPORTS; i++) { mouse.move(0, -127); delay(2); }
     return "ok";
   }
-  if (cmd == "move") { movePaced(a, b); return "ok"; }
-  if (cmd == "abs" || cmd == "tap" || cmd == "swipe") return "err needs the android build";
-#endif
+  if (cmd == "move") { movePaced(a, b, constrain(c, 1, 40)); return "ok"; }  // c: speed per report (calibration)
   if (cmd == "press") { mouse.press(MOUSE_LEFT); return "ok"; }
   if (cmd == "release") { mouse.release(MOUSE_LEFT); return "ok"; }
   if (cmd == "click") { mouse.press(MOUSE_LEFT); delay(60); mouse.release(MOUSE_LEFT); return "ok"; }
-#if IA_TARGET_ANDROID
-  if (cmd == "scroll") return "err touchscreen has no wheel; use swipe X1 Y1 X2 Y2";
-#else
   if (cmd == "scroll") { mouse.move(0, 0, a, b); return "ok"; }
-#endif
   if (cmd == "type") { keyboard.print(arg); return "ok"; }
   if (cmd == "key") return pressCombo(arg) ? "ok" : "err unknown key";
-  if (cmd == "homescreen" || cmd == "back") {
-    bool pressed = consumer.press(cmd == "homescreen" ? AC_HOME : AC_BACK) != 0;
-    delay(40);
-    bool released = consumer.release() != 0;
-    return pressed && released ? "ok" : "err USB consumer report failed (check phone USB data connection)";
-  }
+  if (cmd == "homescreen") { consumer.press(AC_HOME); delay(40); consumer.release(); return "ok"; }
   return "err unknown command";
-}
-
-String run(const String &line) {
-#if IA_TARGET_ANDROID
-  mouse.startCommand();
-#endif
-  String result = runHid(line);
-#if IA_TARGET_ANDROID
-  if (result.startsWith("ok") && !mouse.commandOk()) {
-    // Lift the finger: the arbiter records only a press that answered "ok", and loop() releases only what it
-    // recorded, so a failed report must not leave the touch down for a disconnect to miss (a long press).
-    mouse.release(MOUSE_LEFT);
-    return "err USB touch report failed (check phone USB data connection)";
-  }
-#endif
-  return result;
 }
 
 static arb_state arb;  // the app or the CLI drives the phone, never both: src/hid/arbiter.h
@@ -259,6 +168,15 @@ void readCrash() {
 }
 
 // Board-level commands from the app or the CLI (who); everything else is an HID command for run().
+static bool appHears;  // the app listens and shares what it heard
+
+// The app's transcripts for the CLI, ~3 KB in PSRAM once the app shares any.
+static heard_ring *heardRing() {
+  static heard_ring *r;
+  if (!r && (r = (heard_ring *)heap_caps_calloc(1, sizeof *r, MALLOC_CAP_SPIRAM))) heard_clear(r);
+  return r;
+}
+
 String board(const String &line, const String &id, char who) {
   int sp = line.indexOf(' ');
   String cmd = sp < 0 ? line : line.substring(0, sp);
@@ -266,26 +184,6 @@ String board(const String &line, const String &id, char who) {
   long a = 0, b = 0;
   int n = sscanf(arg.c_str(), "%ld %ld", &a, &b);
   if (who == FROM_CLI && !arb_allowed(ARB_CLI, ble_app_active()) && cmd != "crash") return APP_BUSY;
-  if (cmd == "hidinfo") {
-    char info[256];
-#if IA_TARGET_ANDROID
-    snprintf(info, sizeof info,
-             "ok {\"target\":\"android\",\"pointer\":\"touchscreen\",\"usb\":\"%s\",\"ready\":%s,\"sent\":%lu,\"failed\":%lu,\"build\":\"%s %s\"}",
-             usbState(), tud_hid_n_ready(0) ? "true" : "false",
-             (unsigned long)mouse.sent(), (unsigned long)mouse.failed(), __DATE__, __TIME__);
-#else
-    snprintf(info, sizeof info,
-             "ok {\"target\":\"iphone\",\"pointer\":\"relative-mouse\",\"usb\":\"%s\",\"ready\":%s,\"build\":\"%s %s\"}",
-             usbState(), tud_hid_n_ready(0) ? "true" : "false", __DATE__, __TIME__);
-#endif
-    return info;
-  }
-#if IA_TARGET_ANDROID
-  // No AirPlay receiver and no Wi-Fi in this build, so the video and radio knobs have nothing to drive.
-  if (cmd == "stream" || cmd == "snap" || cmd == "bench" || cmd == "vdbg" || cmd == "res" || cmd == "fps" ||
-      cmd == "coex" || cmd == "txpower")
-    return "err unsupported in the android build";
-#endif
   if (cmd == "stream") {
     if (arg != "on" && arg != "off") return "err usage: stream on|off";
     video_stream(arg == "on", who);
@@ -297,19 +195,39 @@ String board(const String &line, const String &id, char who) {
     return "err not available from the CLI";
   if (cmd == "net" && who == FROM_CLI) {  // the board's Wi-Fi for the CLI's link (docs/cli-protocol.md, "Wi-Fi link")
     if (arg.length()) {
-#if IA_TARGET_ANDROID
-      return "err no Wi-Fi in the android build (the CLI stays on Bluetooth)";  // `net` alone still reports mode none
-#else
       if (!arg.startsWith("{")) return "err usage: net [{\"mode\":\"ap\"} | {\"mode\":\"sta\",\"ssid\":...,\"pass\":...}]";
       net_request(arg);  // applied by net_poll(): the reply goes out first
       return "ok";
-#endif
     }
     return "ok " + net_json(false);
   }
   if (cmd == "app" || cmd == "log") {  // debug relay: Mac -> app ("app run ...") and app -> Mac ("log ...")
     ble_reply(cmd + " " + arg);         // every peer sees it; each side ignores lines it doesn't handle
     if (cmd == "log") Serial.println("log " + arg);  // and a Mac on USB serial
+    return "ok";
+  }
+  // Phone audio for the CLI (docs/cli-protocol.md, "Phone audio"): the app shares what it heard, the CLI reads it
+  // (`heard`) or asks for the raw audio to transcribe itself (`listen raw on`, Wi-Fi only).
+  if (cmd == "hear" && who == FROM_APP) {
+    appHears = arg == "on";
+    if (!appHears && heardRing()) heard_clear(heardRing());
+    return "ok";
+  }
+  if (cmd == "heard" && who == FROM_APP) {
+    if (heardRing()) heard_add(heardRing(), millis(), arg.c_str(), arg.length());
+    return "ok";
+  }
+  if (cmd == "heard") {
+    static char out[HEARD_LINES * 64 + 64];
+    int room = (int)cli_mtu() - 3 - CLI_OVERHEAD - 1 - 16;  // ATT, seal, kind byte, "<id> ok "
+    static const heard_ring none = {};
+    heard_json(heardRing() ? heardRing() : &none, millis(), appHears, out, room > 0 && room < (int)sizeof out ? room : sizeof out);
+    return String("ok ") + out;
+  }
+  if (cmd == "listen" && who == FROM_CLI) {
+    if (arg != "raw on" && arg != "raw off") return "err usage: listen raw on|off";
+    if (arg == "raw on" && !cli_wifi()) return "err raw audio needs the Wi-Fi link (esp32agent net)";
+    cli_audio(arg == "raw on");
     return "ok";
   }
   if (cmd == "logs") return board_log_page(arg);  // the RAM log, a page at a time (logbuf.h)
@@ -324,25 +242,19 @@ String board(const String &line, const String &id, char who) {
   if (cmd == "res") {
     if (n < 2 || a < 160 || b < 160 || a > 1920 || b > 2560) return "err usage: res W H";
     cfg_set_res(a, b);
-#if !IA_TARGET_ANDROID
     airplay_set_display(a, b, cfg_fps());
-#endif
     return "ok";
   }
   if (cmd == "fps") {
     if (n < 1 || a < 1 || a > 60) return "err usage: fps N (1-60)";
     cfg_set_fps(a);
-#if !IA_TARGET_ANDROID
     airplay_set_display(cfg_width(), cfg_height(), a);
-#endif
     return "ok";
   }
-#if !IA_TARGET_ANDROID
   if (cmd == "txpower") {  // A/B knob in 0.25 dBm (8-84), not stored: every boot starts at 5 dBm
     if (n < 1 || a < 8 || a > 84 || esp_wifi_set_max_tx_power(a) != ESP_OK) return "err usage: txpower 8-84";
     return "ok";
   }
-#endif
   if (cmd == "coex") {  // A/B knob, not stored: every boot starts at balance
     if (arg.length() && !net_coex(arg)) return "err usage: coex bt|balance|wifi";
     return String("ok ") + net_coex_mode();
@@ -355,21 +267,10 @@ String board(const String &line, const String &id, char who) {
   return drive(line, who);
 }
 
-// The AirPlay receiver state; the Android build has no receiver, so mirroring is always "idle".
-const char *mirrorState() {
-#if IA_TARGET_ANDROID
-  return "idle";
-#else
-  static const char *apStates[] = {"idle", "connected", "streaming"};
-  return apStates[airplay_state()];
-#endif
-}
-
-// The Android build keeps every field (same shape for the app and the CLI): its Wi-Fi video ("udp") and the CLI's
-// Wi-Fi link are never started there, so they read 0 / "ble".
 String statusJson(bool full, char who) {
+  static const char *apStates[] = {"idle", "connected", "streaming"};
   VideoStats v = video_stats(who);
-  char s[560];
+  char s[704];
   snprintf(s, sizeof s,
            "{\"fw\":\"%s\",\"up\":%lu,\"rst\":\"%s\",\"heap\":%u,\"psram\":%u,\"usb\":\"%s\",\"net\":\"%s\",\"ip\":\"%s\",\"sta\":%d,"
            "\"ap\":\"%s\",\"w\":%u,\"h\":%u,\"kbps\":%lu,\"fps\":%.1f,\"idr\":%lu,\"gop\":%lu,\"vage\":%lu,\"ovf\":%lu,\"fz\":%d,"
@@ -377,7 +278,7 @@ String statusJson(bool full, char who) {
            "\"udp\":{\"n\":%d,\"kbps\":%lu,\"nack\":%lu,\"drop\":%lu}}",
            FW_VERSION, millis(), resetReason(), (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
            (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM), usbState(), net_mode(), net_ip().c_str(), net_peers(),
-           mirrorState(), cfg_width(), cfg_height(), (unsigned long)v.kbps, v.fps, (unsigned long)v.idr_ms,
+           apStates[airplay_state()], cfg_width(), cfg_height(), (unsigned long)v.kbps, v.fps, (unsigned long)v.idr_ms,
            (unsigned long)v.gop_bytes, (unsigned long)v.age_ms, (unsigned long)v.overflows, v.frozen, ble_mtu(), ble_phy(), (unsigned long)ble_kbps(), (unsigned long)ble_drops(),
            (unsigned long)ble_reply_drops(), ble_peers(), wv_active(), (unsigned long)wv_kbps(),
            (unsigned long)wv_nacks(), (unsigned long)wv_drops());
@@ -391,6 +292,12 @@ String statusJson(bool full, char who) {
   const char *owner = arb_owner_name(arb_owner(app, cli_slot() >= 0));
   size_t len = strlen(s);
   snprintf(s + len - 1, sizeof s - len + 1, ",\"owner\":\"%s\"}", owner);
+  // AirPlay audio: packets, sound segments, a segment going on, sender volume (dB), records lost to the app
+  airplay_audio_stats au = airplay_audio();
+  len = strlen(s);
+  snprintf(s + len - 1, sizeof s - len + 1, ",\"aud\":{\"pk\":%lu,\"seg\":%lu,\"snd\":%d,\"vol\":%.0f,\"drop\":%lu,\"hear\":%d,\"raw\":%d}}",
+           (unsigned long)au.packets, (unsigned long)au.segments, au.sound, au.volume, (unsigned long)wv_audio_drops(),
+           appHears, cli_audio_wanted());
   if (who == FROM_CLI) {
     len = strlen(s);
     snprintf(s + len - 1, sizeof s - len + 1, ",\"busy\":%d}", app);
@@ -398,7 +305,7 @@ String statusJson(bool full, char who) {
   if (full) return s;
   // MTU below ~250 (before the MTU exchange): keep only the fields the app needs to stay alive
   snprintf(s, sizeof s, "{\"fw\":\"%s\",\"up\":%lu,\"rst\":\"%s\",\"usb\":\"%s\",\"net\":\"%s\",\"ap\":\"%s\",\"fz\":%d,\"ble\":{\"mtu\":%u}",
-           FW_VERSION, millis(), resetReason(), usbState(), net_mode(), mirrorState(), v.frozen, ble_mtu());
+           FW_VERSION, millis(), resetReason(), usbState(), net_mode(), apStates[airplay_state()], v.frozen, ble_mtu());
   snprintf(s + strlen(s), sizeof s - strlen(s), ",\"owner\":\"%s\"", owner);
   if (who == FROM_CLI)
     snprintf(s + strlen(s), sizeof s - strlen(s), ",\"busy\":%d,\"ip\":\"%s\",\"link\":{\"via\":\"%s\",\"mtu\":%u}", app,
@@ -418,12 +325,10 @@ void statusTask(void *) {
   }
 }
 
-// AirPlay log lines: to USB serial, and to the app ("blog ...", into its debug.log) so a stall on a board
-// plugged into the phone leaves evidence, and into the RAM log. At most 16 a second; the rest are counted and reported later.
-void logLine(const char *msg) {
-#if DEBUG_SERIAL
-  Serial.printf("[%lu] %s\n", millis(), msg);
-#endif
+// Board log lines to the app ("blog ...", into its debug.log) so a stall on a board plugged into the phone leaves
+// evidence: the AirPlay log, and board_log (the video link's switches and resumes, which stayed in the 8 KB RAM log
+// and were gone before anyone looked, 2026-11-06). At most 16 a second; the rest are counted and reported later.
+void relayLine(const char *msg) {
   static uint32_t windowStart, sent, skipped;
   static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
   uint32_t now = millis();
@@ -433,15 +338,21 @@ void logLine(const char *msg) {
   if (now - windowStart >= 1000) { windowStart = now; sent = 0; }
   if (sent < 16) { sent++; send = true; dropped = skipped; skipped = 0; } else skipped++;
   portEXIT_CRITICAL(&mux);
-  if (!send) return;
-  board_log_keep(msg);
-  if (!ble_connected()) return;
+  if (!send || !ble_connected()) return;
   String line = String("blog ") + now + " " + msg;
   if (dropped) line += String(" (+") + dropped + " skipped)";
   ble_reply(line);
 }
 
-#if !IA_TARGET_ANDROID
+// AirPlay log lines: to USB serial, the RAM log and the app.
+void logLine(const char *msg) {
+#if DEBUG_SERIAL
+  Serial.printf("[%lu] %s\n", millis(), msg);
+#endif
+  board_log_keep(msg);
+  relayLine(msg);
+}
+
 void startAirplay() {
   static airplay_cfg cfg;
   cfg.name = receiverName.c_str();
@@ -452,10 +363,10 @@ void startAirplay() {
   cfg.max_fps = cfg_fps();
   cfg.on_config = video_on_config;
   cfg.on_au = video_on_au;
+  cfg.on_audio = wv_audio;
   cfg.log = logLine;
   if (!airplay_start(&cfg)) board_log("airplay: start failed");
 }
-#endif
 
 void setup() {
   Serial.begin(115200);
@@ -469,12 +380,7 @@ void setup() {
   mouse.begin();
   keyboard.begin();
   consumer.begin();
-#if IA_TARGET_ANDROID
-  USB.productName("ESP32 Agent Touch");
-  USB.firmwareVersion(0x0104);  // new device revision for the contact-ID touchscreen descriptor
-#else
   USB.productName("HID Bridge");
-#endif
   USB.begin();
   esp_task_wdt_config_t wdt = {.timeout_ms = WATCHDOG_MS, .idle_core_mask = 0, .trigger_panic = true};
   esp_task_wdt_reconfigure(&wdt);
@@ -483,22 +389,13 @@ void setup() {
 
   net_begin();
   if (!video_begin()) board_log("video: no PSRAM for the GOP buffer");
-  // The Android build starts no Wi-Fi, so lwIP is never brought up: these would open sockets on a TCP/IP stack
-  // that does not exist (an assert at boot). Their getters (wv_active, cli_tcp_up, ...) stay safe and read idle.
-  // ota_confirm() in loop() needs no network and stays in both builds.
-#if !IA_TARGET_ANDROID
   if (!wv_begin()) board_log("video: Wi-Fi video channel failed to start");
   if (!ota_begin()) board_log("ota: failed to start");
-#endif
   arb_init(&arb);
   cli_begin();
-#if !IA_TARGET_ANDROID
   if (!cli_tcp_begin()) board_log("cli: Wi-Fi link failed to start");
-#endif
   ble_begin("ESP32 Agent " + board_suffix());
-#if !IA_TARGET_ANDROID
   startAirplay();
-#endif
   xTaskCreatePinnedToCore(statusTask, "status", 4096, NULL, 1, NULL, 1);
   board_log("boot %s fw %s: free internal heap %u (largest %u), PSRAM %u, reset %s\n", receiverName.c_str(), FW_VERSION,
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
@@ -517,6 +414,7 @@ void loop() {
     if (arb_gone(&arb, ARB_APP)) mouse.release(MOUSE_LEFT);
     keyboard.releaseAll();
     video_stream(false, FROM_APP);
+    appHears = false;  // until the app says so again
   }
   if (cliLinked && !cli) {
     if (arb_gone(&arb, ARB_CLI)) mouse.release(MOUSE_LEFT);

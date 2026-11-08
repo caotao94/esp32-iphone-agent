@@ -1,27 +1,49 @@
 # Changelog
 
+Full changelog with board firmware and every channel: [handsy.tech/docs/changelog](https://handsy.tech/docs/changelog).
+
 ## Unreleased (main)
 
-- Android 0.1.5: stop back-and-forth navigation loops (repeated shade-open/Home-press or similar cycles); paste letters too, so a Chinese (pinyin) keyboard cannot turn them into a composition, while plain digits stay typed key by key for code boxes and pickers (HID typing also when the clipboard refuses), and clear the agent's clip once the paste has landed and when a run ends; match apps whose launcher names only partially match the goal or appear next to Chinese text; tell the model which phone/launcher it's driving.
-- Android firmware on board firmware 0.2.3: still no Wi-Fi, so the Wi-Fi video channel, OTA updates and the CLI's Wi-Fi link are never started; `vdbg`, `txpower` and CLI `net` writes are refused; a failed USB touch report lifts the finger before answering `err`. The `esp32agent` CLI does not support the Android build yet (docs/android.md).
-- Android 0.1.4: look up launcher-visible installed app labels and use exact names in application-list search; continue inside an already-open app.
-- Android control: execute one action per screenshot, discard coordinates when the layout changes during model inference, retain action history across replans, block near-duplicate and cyclic taps, and stop repeated replanning. Capture always requests the full display and static images stay usable while projection is active.
-- Android input: support Chinese, emoji and other Unicode text by placing it in the Android clipboard and pasting with `Ctrl+V`.
-- Android agent: prevent duplicate actions after a successful touch or an uncertain board timeout. Screen-change checks now handle unsigned grayscale pixels, preserve absolute-touch feedback, use the capture timestamp, and never replay a command whose reply was lost.
-- Android capture: detect several consecutive uniform dark frames from protected/DRM windows and stop before
-  sending an unusable frame to the model, with an actionable notice. Android's secure-surface policy cannot be bypassed by a normal app.
-- Android 0.1.3 / touchscreen firmware: replace the absolute-mouse descriptor with a USB single-touch
-  digitizer (Tip Switch, Contact ID/count and absolute X/Y), propagate failed touch/consumer reports as errors,
-  bump the USB revision to 0x0104, add `hidinfo`, and expose HID diagnostics in the Board tab. Reflashing the board is required for the input change.
-- Android 0.1.2: wait for the first captured frame before running or calibrating, report capture startup
-  timeout/revocation, clear frames between sessions, and keep task input when switching tabs.
-- Android model setup: strip clipboard whitespace/invisible marks from API keys (including saved settings),
-  mask the key field, and reject invalid header characters without exposing the key. Debug app version 0.1.1.
-- Android port (route A: `android/` + `docs/android.md`): a Kotlin/Compose app with the agent, the BLE link and
-  the action grammar ported from the iPhone app. The eyes are a `MediaProjection` capture instead of AirPlay over
-  BLE, and traces keep the iPhone layout. Firmware: `flash.sh --android` builds an absolute-pointer variant with
-  no hotspot and no AirPlay, and both builds learned a `back` key (consumer AC Back). Not yet run on hardware.
-- `hardware/tools/board_test.py android` checks that firmware build over BLE.
+- Siri AI developer preview (off by default, see `docs/siri-ai-app-intents.md`): tool intents to run a
+  task, stop the run, check the run and replay a recorded run; an app skill for multi-step guidance in
+  `Skills.skillsbundle`; and view annotations that tell Siri which run is on screen.
+
+## App 1.0.3 (TestFlight)
+
+- Free line: requests carry the iPhone's model (e.g. `iPhone18,2`, `X-Device-Model`) to adapt to its screen;
+  listed in the send consent sheet and the privacy policy. Nothing else is added.
+- App: typing Chinese no longer crashes (a Vision text request could resume its continuation twice, #111); the
+  app builds with Xcode 26.3 / 27 (ambiguous `cos` / `.pi`, #112).
+- App: after a round of several gestures the next step goes to the model, not Jev, so a plan whose first items were
+  just done is not redone (Duolingo: a tapped word was taken back out of the answer). Pointer searches log where
+  their time goes; the step timing line counts past 40.
+- Harness: following the log survives a line cut mid-character. CI: the settle test no longer fails on slow runners.
+- App: models that refuse a `temperature` setting get none (#45).
+
+## App 1.0.2 · firmware v0.2.4 (TestFlight)
+
+- Hear the phone (off by default, Settings › Listen to phone audio): the board forwards AirPlay audio, the app
+  transcribes it on the iPhone (English plus a second language) and the agent sees what it heard. The second
+  language can follow the screen (Automatic). The CLI can listen too (`listen`). Needs firmware v0.2.4.
+- Long tasks: no 40-round limit (300-round safety cap; 12 unchanged rounds pause and ask), and any stopped or
+  failed run can Continue from here, also after a relaunch.
+- More accurate pointer: every move report at one speed (firmware `pace`), speed calibration for short moves,
+  the corner offset is calibrated, far pointer readings are checked twice, and the corner move never opens
+  Control Center. A later tap in one round checks its target did not move first.
+- Steadier video: network checks and pixel work off the main thread (stream drops 41 → 0 in a Duolingo
+  lesson), a gap resumes from the last decoded frame, a Wi-Fi/BLE switch no longer resends the whole GOP, and
+  the model never sees a frame older than its last action.
+- Settings › Developer: Demo data and an audio test.
+- Fixed: calibration and the debug log could crash the app (#97); a lost BLE ack could repeat an input (#90).
+
+## CLI 0.1.3 (npm `esp32agent` 0.1.4, dsh plugin 0.1.2)
+
+- `listen`: what the iPhone played in the last 30 s as words. `mode phone` (default) reads what the ESP32 Agent
+  app transcribed (App 1.0.2, firmware v0.2.4, Share with the computer on); `mode local` transcribes the raw
+  audio here with whisper.cpp. MCP tool `phone_audio`.
+
+## Firmware v0.2.3 · CLI 0.1.2 (2026-11-05)
+
 - Board firmware v0.2.3 (TestFlight channel): CLI link over Wi-Fi (TCP 7202) next to BLE, `net` command for
   the CLI, BLE write-without-response characteristic `cli_in_nr`.
 - CLI v0.1.2 (npm `esp32agent` 0.1.3, dsh plugin 0.1.1) — CLI over Wi-Fi: with the computer on the board's network (same Wi-Fi, or its hotspot) the CLI's session moves
@@ -31,9 +53,9 @@
   the pointer one axis at a time (old calibrations are redone) and ignores moving clock hands.
 - DeepSeek Harness plugin (`integrations/dsh`, npm `dsh-esp32agent`): the esp32agent MCP server plus the
   handsy skill as a dsh bundle. Uses esp32agent 0.1.2 (CLI binary v0.1.1: empty `required` arrays, #77).
-- Siri AI developer preview (off by default, see `docs/siri-ai-app-intents.md`): tool intents to run a
-  task, stop the run, check the run and replay a recorded run; an app skill for multi-step guidance in
-  `Skills.skillsbundle`; and view annotations that tell Siri which run is on screen.
+
+## App 1.0 · 1.0.1 (App Store review 2026-10-19, TestFlight 2026-11-02)
+
 - No computer: the ESP32 is the AirPlay receiver (ported from UxPlay) with its own hotspot, and talks to a new
   iPhone app over BLE. The app is the agent: planner/actor loop, pointer calibration, run replay, Live Activity,
   widgets, Siri and Shortcuts, self-healing when the board, hotspot or mirroring drops.
